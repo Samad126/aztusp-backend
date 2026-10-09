@@ -93,7 +93,6 @@ class AttendanceStudent(BaseModel):
     number: str
     student_id: str
     name: str
-    is_me: bool = Field(description="True for the logged-in student's row.")
     marks: list[AttendanceMark] = Field(description="One entry per class meeting, in order.")
     score: str | None = Field(description="Points for attendance (`Bal`).")
     percent: str | None = Field(description="Attendance percentage (`Davamiyyət faizi`).")

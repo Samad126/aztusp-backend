@@ -63,7 +63,7 @@ def client(store, monkeypatch):
             "header": {"score": "0", "percent": "100%"},
             "sessions": [{"number": "1", "date": None, "journal_date": None}],
             "students": [
-                {"number": "1", "student_id": "u1", "name": "N", "is_me": True, "marks": [{"session": "1", "status": "i", "mark": "present"}], "score": "0", "percent": "100"}
+                {"number": "1", "student_id": "u1", "name": "N", "marks": [{"session": "1", "status": "i", "mark": "present"}], "score": "0", "percent": "100"}
             ],
         },
     )

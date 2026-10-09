@@ -244,16 +244,13 @@ def course_attendance(scraper: SiteScraper, lec_open_idx: str) -> dict:
     if values:
         result["header"] = {"score": _text(values[-2]) or None, "percent": _text(values[-1]) or None}
 
-    username = getattr(scraper, "username", "").lower()
     for cells in _student_rows(journal, count):
         tail = cells[3 + count :]
-        student_id = _text(cells[1])
         result["students"].append(
             {
                 "number": _text(cells[0]),
-                "student_id": student_id,
+                "student_id": _text(cells[1]),
                 "name": _text(cells[2]),
-                "is_me": student_id.lower() == username,
                 "marks": [_mark(number, cell) for number, cell in zip(numbers, cells[3 : 3 + count])],
                 "score": (_text(tail[-2]) or None) if len(tail) >= 2 else None,
                 "percent": (_text(tail[-1]) or None) if len(tail) >= 2 else None,

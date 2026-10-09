@@ -168,20 +168,14 @@ def test_attendance_returns_header_legend_sessions_and_every_student():
         {"number": "3", "date": None, "journal_date": None},
     ]
     me, other = page["students"]
-    assert (me["number"], me["student_id"], me["name"], me["is_me"]) == ("1", "S1", "Me", True)
+    assert (me["number"], me["student_id"], me["name"]) == ("1", "S1", "Me")
     assert me["marks"] == [
         {"session": "1", "status": "i", "mark": "present"},
         {"session": "2", "status": "q", "mark": "absent"},
         {"session": "3", "status": None, "mark": None},
     ]
     assert (me["score"], me["percent"]) == ("2", "66")
-    assert (other["student_id"], other["is_me"], other["score"], other["percent"]) == ("S2", False, "0", "100")
-
-
-def test_attendance_marks_nobody_as_me_when_username_differs():
-    scraper = FakeScraper()
-    scraper.username = "someone-else"
-    assert [s["is_me"] for s in courses.course_attendance(scraper, "7")["students"]] == [False, False]
+    assert (other["student_id"], other["score"], other["percent"]) == ("S2", "0", "100")
 
 
 def test_plan_info_read_from_live_table():
