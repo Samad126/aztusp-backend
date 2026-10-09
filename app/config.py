@@ -21,7 +21,6 @@ class Settings:
     username_field: str
     password_field: str
     timeout: float
-    dump_dir: str | None = None  # dev only: save every fetched page here
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -40,7 +39,6 @@ class Settings:
             username_field=os.getenv("USERNAME_FIELD", "username").strip(),
             password_field=os.getenv("PASSWORD_FIELD", "password").strip(),
             timeout=float(os.getenv("REQUEST_TIMEOUT", "20")),
-            dump_dir=os.getenv("DUMP_PAGES_DIR", "").strip() or None,
         )
 
         for url in (settings.login_url, settings.dashboard_url):

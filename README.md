@@ -166,7 +166,3 @@ with the portal's terms.
 ## License
 
 [MIT](LICENSE)
-
-### Debugging parsers
-
-Set `DUMP_PAGES_DIR=samples/raw` in `.env` to save the raw HTML of every page the service fetches (it contains personal data; `samples/` is git-ignored). Use it to compare what the portal really returns with what a parser expects.

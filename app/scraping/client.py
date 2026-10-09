@@ -1,9 +1,7 @@
 import json
 import logging
-import re
 import threading
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -122,17 +120,7 @@ class SiteScraper:
             if self._looks_logged_out(response):
                 raise LoginError("Site session expired, please log in again")
             self._save_cookies()
-            self._dump(url, response.text)
             return BeautifulSoup(response.text, "html.parser")
-
-    def _dump(self, url: str, html: str) -> None:
-        """Dev aid: with DUMP_PAGES_DIR set, keep the raw HTML of every fetched page (it holds personal data)."""
-        if not self.settings.dump_dir:
-            return
-        name = re.sub(r"[^A-Za-z0-9]+", "_", urlparse(url).path.strip("/") + "?" + urlparse(url).query).strip("_")
-        directory = Path(self.settings.dump_dir)
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / f"{name[:150]}.html").write_text(html, encoding="utf-8")
 
     def _login(self) -> None:
         settings = self.settings

@@ -122,7 +122,9 @@ def _fetch_tab(scraper: SiteScraper, lec_open_idx: str, name: str) -> tuple[dict
     soup = scraper.fetch(url, headers=PJAX_HEADERS)
     heading = soup.select_one("h6.page-title")
     course = _clean(heading.get_text(" ", strip=True)) if heading else None
-    return params, soup.select_one("#secondary_content") or soup, course, url
+    # The tab normally sits inside #secondary_content; if that box is empty or missing, use the whole page.
+    box = soup.select_one("#secondary_content")
+    return params, box if box is not None and box.find("table") else soup, course, url
 
 
 def _clean(text: str) -> str:
@@ -188,7 +190,7 @@ def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
     params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "scores")
     result: dict = {"params": params, "course": course, "table": [], "components": [], "total": None, "notes": []}
 
-    table = content.select_one("table#toplam_score")
+    table = content.select_one("table#toplam_score") or _find_score_table(content)
     grid = _grid(table) if table else []
     result["table"] = [{_clean(label): value for label, value in zip(grid[0], row)} for row in grid[1:]]
     if len(grid) >= 2:
@@ -203,6 +205,12 @@ def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
 
     result["notes"] = [_clean(p.get_text(" ", strip=True)) for p in content.select("p.text-danger")]
     return result
+
+
+def _find_score_table(content: Tag | BeautifulSoup) -> Tag | None:
+    """The score table by its `Toplam` (total) column, for when the usual id is missing."""
+    tables = [t for t in content.find_all("table") if t.find("table") is None and "toplam" in t.get_text().lower()]
+    return tables[0] if tables else None
 
 
 def course_attendance(scraper: SiteScraper, lec_open_idx: str) -> dict:
