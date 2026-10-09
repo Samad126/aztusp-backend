@@ -69,3 +69,18 @@ def test_parse_pairs_skips_rows_that_are_not_two_columns():
 def testcolumn_keys_dedupes_and_falls_back():
     assert column_keys(["A", "", "A"], 3) == ["A", "column_2", "column_3"]
     assert column_keys(["A"], 2) == ["column_1", "column_2"]
+
+
+def test_fetch_can_dump_raw_pages_for_debugging(tmp_path, monkeypatch):
+    settings = Settings("k", "db", "example.com", "https://login.example.com/", "https://d.example.com/", "u", "p", 5.0, str(tmp_path))
+    scraper = SiteScraper(settings, "user")
+
+    class Response:
+        url = "https://d.example.com/studies/lecture_score.php?lec_open_idx=7"
+        text = "<html>raw</html>"
+        status_code = 200
+        headers = {}
+
+    monkeypatch.setattr(scraper, "_request", lambda *a, **k: Response())
+    scraper.fetch(Response.url)
+    assert [f.read_text() for f in tmp_path.iterdir()] == ["<html>raw</html>"]

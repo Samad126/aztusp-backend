@@ -47,7 +47,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/courses/{lec_open_idx}/scores` | ✔ | Current points per component and the total |
 | `GET` | `/api/v1/courses/{lec_open_idx}/attendance` | ✔ | Attendance journal: per-class marks, score and percentage |
 
-The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows keyed in English (`subject`, `author`, `date`, `views`, ...), plus `id` when the row opens a detail view and `link` for its first link. An empty `items` means nothing was posted. `scores` returns `components` (name, max, score) and `total`; `attendance` returns `sessions` with dates and marks.
+The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows keyed in English (`subject`, `author`, `date`, `views`, ...), plus `id` when the row opens a detail view and `link` for its first link. An empty `items` means nothing was posted. `scores` returns the table as shown (`table`, every cell kept), the same split into `components` (name, max, score) and the `total`. `attendance` returns `info`, the mark `legend`, `header` values, the class `sessions` (dates) and every `students` row with one mark per class (`is_me` flags yours).
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 
@@ -166,3 +166,7 @@ with the portal's terms.
 ## License
 
 [MIT](LICENSE)
+
+### Debugging parsers
+
+Set `DUMP_PAGES_DIR=samples/raw` in `.env` to save the raw HTML of every page the service fetches (it contains personal data; `samples/` is git-ignored). Use it to compare what the portal really returns with what a parser expects.

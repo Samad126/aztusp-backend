@@ -186,10 +186,11 @@ def _detail_id(row: Tag) -> str | None:
 def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
     """Current scores: one component per column of the score table (name, maximum, score) plus the total."""
     params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "scores")
-    result: dict = {"params": params, "course": course, "components": [], "total": None, "notes": []}
+    result: dict = {"params": params, "course": course, "table": [], "components": [], "total": None, "notes": []}
 
     table = content.select_one("table#toplam_score")
     grid = _grid(table) if table else []
+    result["table"] = [{_clean(label): value for label, value in zip(grid[0], row)} for row in grid[1:]]
     if len(grid) >= 2:
         for label, value in zip(grid[0], grid[1]):
             label = _clean(label)
@@ -205,64 +206,97 @@ def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
 
 
 def course_attendance(scraper: SiteScraper, lec_open_idx: str) -> dict:
-    """Attendance journal of the logged-in student: one entry per class meeting, plus score and percentage."""
+    """The attendance table: class meetings, every student row with a mark per meeting, and the header values."""
     params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "attendance")
-    result: dict = {"params": params, "course": course, "info": {}, "sessions": [], "score": None, "percent": None}
+    result: dict = {"params": params, "course": course, "info": {}, "legend": {}, "header": {}, "sessions": [], "students": []}
 
     tables = _visible_tables(content)
     info_table = next((t for t in tables if t.get("id") == "op_list"), None)
     if info_table is not None:
-        result["info"] = _attendance_info(info_table)
+        result["info"], result["legend"] = _attendance_info(info_table)
 
     journal = next((t for t in tables if t.get("id") == "datatable-buttons"), None)
     if journal is None:
         return result
 
     head = {}
-    for row in (journal.find("thead") or journal).find_all("tr"):
-        cells = row.find_all(["th", "td"], recursive=False)
+    header_rows = [r.find_all(["th", "td"], recursive=False) for r in (journal.find("thead") or journal).find_all("tr")]
+    for cells in header_rows:
         if cells:
-            head[_clean(cells[0].get_text(" ", strip=True))] = cells
-    numbers = [_clean(c.get_text(" ", strip=True)) for c in head.get("Nömrə", [])[3:] if _clean(c.get_text(" ", strip=True)).isdigit()]
-    dates = _cell_texts(head, "Dərsin tarixi", len(numbers))
-    journal_dates = _cell_texts(head, "Jurnalın yazılma tarixi", len(numbers))
+            head[_text(cells[0])] = cells
+    numbers = [_text(c) for c in head.get("Nömrə", [])[3:] if _text(c).isdigit()]
+    count = len(numbers)
+    dates = _cell_texts(head, "Dərsin tarixi", count)
+    journal_dates = _cell_texts(head, "Jurnalın yazılma tarixi", count)
+    result["sessions"] = [
+        {"number": number, "date": dates[i] or None, "journal_date": journal_dates[i] or None} for i, number in enumerate(numbers)
+    ]
+    # The row under the column titles repeats the header values: points and percentage (e.g. "0" and "100%").
+    values = next((cells for cells in header_rows if cells and len(cells) == count + 2 and all(not _text(c) for c in cells[:count])), None)
+    if values:
+        result["header"] = {"score": _text(values[-2]) or None, "percent": _text(values[-1]) or None}
 
-    cells = _own_row(journal, numbers, getattr(scraper, "username", ""))
-    marks = cells[3 : 3 + len(numbers)] if cells else []
-    tail = cells[3 + len(numbers) :] if cells else []
-    for i, number in enumerate(numbers):
-        cell = marks[i] if i < len(marks) else None
-        classes = {c for el in (cell.select("[class]") if cell else []) for c in el.get("class", [])}
-        result["sessions"].append(
+    username = getattr(scraper, "username", "").lower()
+    for cells in _student_rows(journal, count):
+        tail = cells[3 + count :]
+        student_id = _text(cells[1])
+        result["students"].append(
             {
-                "number": number,
-                "date": dates[i] or None,
-                "journal_date": journal_dates[i] or None,
-                "status": (_clean(cell.get_text(" ", strip=True)) or None) if cell else None,
-                "mark": next((ATTEND_MARKS[c] for c in classes if c in ATTEND_MARKS), None),
+                "number": _text(cells[0]),
+                "student_id": student_id,
+                "name": _text(cells[2]),
+                "is_me": student_id.lower() == username,
+                "marks": [_mark(number, cell) for number, cell in zip(numbers, cells[3 : 3 + count])],
+                "score": (_text(tail[-2]) or None) if len(tail) >= 2 else None,
+                "percent": (_text(tail[-1]) or None) if len(tail) >= 2 else None,
             }
         )
-    if len(tail) >= 2:
-        result["score"] = _clean(tail[-2].get_text(" ", strip=True)) or None
-        result["percent"] = _clean(tail[-1].get_text(" ", strip=True)) or None
     return result
 
 
-def _attendance_info(table: Tag) -> dict[str, str]:
-    """Course summary: labels in the first row (one cell spans two rows and holds the dates), values in the second."""
+def _text(cell: Tag) -> str:
+    return _clean(cell.get_text(" ", strip=True))
+
+
+def _mark(number: str, cell: Tag) -> dict:
+    classes = {c for el in (cell, *cell.select("[class]")) for c in el.get("class", [])}
+    return {"session": number, "status": _text(cell) or None, "mark": next((ATTEND_MARKS[c] for c in classes if c in ATTEND_MARKS), None)}
+
+
+def _student_rows(journal: Tag, count: int) -> list[list[Tag]]:
+    """Cells of every student row: number, id and name, one cell per class meeting, then the totals."""
+    return [
+        cells
+        for row in journal.find_all("tr")
+        if row.find_parent("thead") is None and len(cells := row.find_all(["th", "td"], recursive=False)) >= 3 + count
+    ]
+
+
+def _attendance_info(table: Tag) -> tuple[dict[str, str], dict[str, str]]:
+    """Course summary and the legend of mark codes.
+
+    Row 1 holds the labels (one cell spans two rows and holds the dates), row 2 the values and
+    row 3 the legend ("Davamiyyət : i/e", "Mühazirə : M", ...).
+    """
     rows = [row.find_all(["td", "th"], recursive=False) for row in table.find_all("tr")]
+    rows = [cells for cells in rows if cells]
     if len(rows) < 2:
-        return {}
+        return {}, {}
     labels = [c for c in rows[0] if not c.get("rowspan")]
-    info = {ATTEND_INFO_MAP.get(_clean(l.get_text(" ", strip=True)), _clean(l.get_text(" ", strip=True))): _clean(v.get_text(" ", strip=True)) for l, v in zip(labels, rows[1])}
+    info = {ATTEND_INFO_MAP.get(_text(l), _text(l)): _text(v) for l, v in zip(labels, rows[1])}
     if period := next((c for c in rows[0] if c.get("rowspan")), None):
-        info["period"] = _clean(period.get_text(" ", strip=True))
-    return info
+        info["period"] = _text(period)
+    legend = {}
+    for cell in rows[2] if len(rows) > 2 else []:
+        name, _, code = _text(cell).partition(":")
+        if code:
+            legend[name.strip()] = code.strip()
+    return info, legend
 
 
 def _cell_texts(head: dict[str, list[Tag]], label: str, count: int) -> list[str]:
     cells = head.get(label, [])[1 : 1 + count]
-    texts = [_clean(c.get_text(" ", strip=True)) for c in cells]
+    texts = [_text(c) for c in cells]
     return texts + [""] * (count - len(texts))
 
 

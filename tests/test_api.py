@@ -51,12 +51,21 @@ def client(store, monkeypatch):
     base = {"params": {"lec_open_idx": "7"}, "course": "Math ( M1 )"}
     monkeypatch.setattr(courses, "course_items", lambda scraper, idx, name: {**base, "items": [{"subject": name}]})
     monkeypatch.setattr(
-        courses, "course_scores", lambda scraper, idx: {**base, "components": [{"name": "Quiz", "max": "10", "score": None}], "total": "0", "notes": []}
+        courses, "course_scores", lambda scraper, idx: {**base, "table": [{"Quiz(10)": "0"}], "components": [{"name": "Quiz", "max": "10", "score": "0"}], "total": "0", "notes": []}
     )
     monkeypatch.setattr(
         courses,
         "course_attendance",
-        lambda scraper, idx: {**base, "info": {}, "sessions": [{"number": "1", "date": None, "journal_date": None, "status": "i", "mark": "present"}], "score": "0", "percent": "100"},
+        lambda scraper, idx: {
+            **base,
+            "info": {},
+            "legend": {},
+            "header": {"score": "0", "percent": "100%"},
+            "sessions": [{"number": "1", "date": None, "journal_date": None}],
+            "students": [
+                {"number": "1", "student_id": "u1", "name": "N", "is_me": True, "marks": [{"session": "1", "status": "i", "mark": "present"}], "score": "0", "percent": "100"}
+            ],
+        },
     )
     yield TestClient(app)
     app.dependency_overrides.clear()
@@ -109,9 +118,10 @@ def test_course_list_tabs(client, name):
 
 def test_course_scores_and_attendance(client):
     headers = login(client)
-    assert client.get("/api/v1/courses/7/scores", headers=headers).json()["components"][0]["name"] == "Quiz"
+    scores = client.get("/api/v1/courses/7/scores", headers=headers).json()
+    assert scores["table"] == [{"Quiz(10)": "0"}] and scores["components"][0]["score"] == "0"
     attendance = client.get("/api/v1/courses/7/attendance", headers=headers).json()
-    assert attendance["sessions"][0]["mark"] == "present" and attendance["percent"] == "100"
+    assert attendance["students"][0]["marks"][0]["mark"] == "present" and attendance["header"]["percent"] == "100%"
 
 
 def test_expired_site_session_is_401(client, monkeypatch):

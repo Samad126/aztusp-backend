@@ -71,26 +71,42 @@ class ScoreComponent(BaseModel):
 class CourseScores(BaseModel):
     params: dict[str, str] = Field(description="Ids that identify the course on the site.")
     course: str | None
-    components: list[ScoreComponent]
+    table: list[dict[str, str]] = Field(description="The score table as shown: column title -> value, empty cells kept as `\"\"`.")
+    components: list[ScoreComponent] = Field(description="The same data split into name, maximum and score per column, without the total.")
     total: str | None = Field(description="Total (`Toplam`) as shown on the site.")
     notes: list[str] = Field(description="Remarks printed under the table.")
 
 
 class AttendanceSession(BaseModel):
     number: str = Field(description="Class meeting number, starting at 1.")
-    date: str | None = Field(description="Date of the class; `null` until it has been held.")
-    journal_date: str | None = Field(description="Date the teacher filled in the journal.")
+    date: str | None = Field(description="Date of the class (`Dərsin tarixi`); `null` until it has been held.")
+    journal_date: str | None = Field(description="Date the teacher filled in the journal (`Jurnalın yazılma tarixi`).")
+
+
+class AttendanceMark(BaseModel):
+    session: str = Field(description="Class meeting number.")
     status: str | None = Field(description="Mark text as shown on the site; `null` if empty.")
     mark: Literal["present", "absent", "not_entered"] | None = Field(description="Mark classified by its colour class on the site.")
+
+
+class AttendanceStudent(BaseModel):
+    number: str
+    student_id: str
+    name: str
+    is_me: bool = Field(description="True for the logged-in student's row.")
+    marks: list[AttendanceMark] = Field(description="One entry per class meeting, in order.")
+    score: str | None = Field(description="Points for attendance (`Bal`).")
+    percent: str | None = Field(description="Attendance percentage (`Davamiyyət faizi`).")
 
 
 class CourseAttendance(BaseModel):
     params: dict[str, str] = Field(description="Ids that identify the course on the site.")
     course: str | None
     info: dict[str, str] = Field(description="Course summary: course, total_hours, weekly_hours, credits, group, teacher, period.")
+    legend: dict[str, str] = Field(description="Mark codes explained on the page, e.g. `Davamiyyət`: `i/e`, `Mühazirə`: `M`.")
+    header: dict[str, str | None] = Field(description="Values printed in the table header under `Bal` and `Davamiyyət faizi`: `score`, `percent`.")
     sessions: list[AttendanceSession]
-    score: str | None = Field(description="Points for attendance (`Bal`).")
-    percent: str | None = Field(description="Attendance percentage (`Davamiyyət faizi`), without the % sign.")
+    students: list[AttendanceStudent] = Field(description="Every student row on the page, in page order.")
 
 
 class LecturePlan(BaseModel):

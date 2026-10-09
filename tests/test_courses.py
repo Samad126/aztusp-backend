@@ -18,12 +18,22 @@ FILLED_LIST = TITLE + """<div id="secondary_content"><table id="op_list"><thead>
 TASKS = TITLE + """<div id="secondary_content"><table id="datatable-task"><thead><tr><th>Nömrə</th><th>Sərbəst işin növü</th><th>Qiymətləndirmə</th><th>Movzu</th><th></th><th>Başlanğıc</th><th>Son gun</th></tr></thead>
 <tbody><tr><td colspan="8">Qeyd olunmuş material yoxdur</td></tr></tbody></table></div>"""
 
-SCORES = TITLE + """<div id="secondary_content"><table id="toplam_score"><tbody class="text-center">
-<!-- <tr><td><b>Adı</td></tr> -->
-<tr><td>sərbəst iş(10)</td><td>Məşğələ(30)</td><td>Davamiyyət</td><td><b>Toplam</b></td></tr>
-<tr><td><input type="hidden" value="0"><font>7</font></td><td><input type="hidden" value="0"><font>0</font></td>
-<td><input type="hidden" value="0"></td><td><input type="hidden" value="0">7</td></tr></tbody></table>
-<p class="text-danger"><i><b>*Qeyd:</b> Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır.</i></p></div>"""
+SCORES = TITLE + """<div id="secondary_content"><div class="container-fluid"><div class="card-body table-responsive">
+<br><table id="toplam_score" class="table table-striped" border="1"><tbody class="text-center">
+  <!--   <tr bgcolor="#F9F9FB" height="30" align="center">
+    <td><b>Adı</td> -->
+            <tr><td>sərbəst iş(10)</td>
+                <td>Məşğələ(30)</td>
+            <td>Davamiyyət</td>
+    <td><b>Toplam<!-- 총점 --></b></td>
+    </tr>
+                <tr height="24" align="center">
+                <td><input type="hidden" name="score_S1[]" id="score_S10" value="0"><font color="">7</font></td>
+                <td><input type="hidden" name="score_S1[]" id="score_S11" value="0"><font color="">0</font></td>
+                           <td><input type="hidden" value="0"></td>
+            <td><input type="hidden" value="0">7</td>
+            </tr></tbody></table>
+<p class="text-danger" style="font-size: 15px;"><i><b>*Qeyd:</b> Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır.</i></p></div></div></div>"""
 
 
 def _attend(rows: str, own_id: str = "S1") -> str:
@@ -35,7 +45,7 @@ def _attend(rows: str, own_id: str = "S1") -> str:
 <table id="op_list"><tbody>
 <tr><td>Fənnin adı<!-- x --></td><td>Saatların cəmi</td><td>Həftəlik dərs saatları</td><td>Kredit</td><td rowspan="2">2026.09.15 - 2026.12.31</td><td>Qrup</td><td>Müəllim</td></tr>
 <tr><td>Math</td><td>30</td><td></td><td>6</td><td>M1</td><td>Dr. X</td></tr>
-<tr><td>Davamiyyət : i/e</td><td>q/b</td></tr></tbody></table>
+<tr><td>Davamiyyət : i/e</td><td>İştirak etmir: q/b</td><td colspan="2">Mühazirə : M</td></tr></tbody></table>
 <table id="datatable-buttons"><thead><tr></tr>
 <tr><th rowspan="2">Nömrə</th><th rowspan="2">İdentifikator</th><th rowspan="2">Adı</th>{head}<th rowspan="38"></th><th>Bal</th><th>Davamiyyət faizi</th></tr>
 <tr>{blank}<th>0</th><th>100%</th></tr>
@@ -44,11 +54,15 @@ def _attend(rows: str, own_id: str = "S1") -> str:
 {rows.replace("{own}", own_id)}</table></div>"""
 
 
-ATTEND = _attend(
-    '<tbody><tr><th>1</th><th>{own}</th><th>Name</th>'
+MY_ROW = (
+    '<tbody><tr><th>1</th><th>{own}</th><th>Me</th>'
     '<td><span class="attend-label ie">i</span></td><td><span class="attend-label qb">q</span></td><td></td>'
     '<td></td><td>2</td><td>66</td></tr></tbody>'
 )
+OTHER_ROW = (
+    '<tbody><tr><th>2</th><th>S2</th><th>Other</th><td></td><td></td><td></td><td></td><td>0</td><td>100</td></tr></tbody>'
+)
+ATTEND = _attend(MY_ROW + OTHER_ROW)
 
 TAB_PAGES = {
     "lecture_notice": EMPTY_LIST,
@@ -128,8 +142,9 @@ def test_list_tab_rows_get_english_keys_ids_and_links():
     ]
 
 
-def test_scores_split_into_components_and_total():
+def test_scores_keep_every_cell_including_zero_and_empty():
     page = courses.course_scores(FakeScraper(), "7")
+    assert page["table"] == [{"sərbəst iş(10)": "7", "Məşğələ(30)": "0", "Davamiyyət": "", "Toplam": "7"}]
     assert page["components"] == [
         {"name": "sərbəst iş", "max": "10", "score": "7"},
         {"name": "Məşğələ", "max": "30", "score": "0"},
@@ -139,32 +154,34 @@ def test_scores_split_into_components_and_total():
     assert page["notes"] == ["*Qeyd: Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır."]
 
 
-def test_attendance_reads_own_row_with_dates_and_marks():
+def test_attendance_returns_header_legend_sessions_and_every_student():
     page = courses.course_attendance(FakeScraper(), "7")
     assert page["info"] == {
         "course": "Math", "total_hours": "30", "weekly_hours": "", "credits": "6", "group": "M1", "teacher": "Dr. X",
         "period": "2026.09.15 - 2026.12.31",
     }
+    assert page["legend"] == {"Davamiyyət": "i/e", "İştirak etmir": "q/b", "Mühazirə": "M"}
+    assert page["header"] == {"score": "0", "percent": "100%"}
     assert page["sessions"] == [
-        {"number": "1", "date": "15.09", "journal_date": "16.09", "status": "i", "mark": "present"},
-        {"number": "2", "date": "22.09", "journal_date": None, "status": "q", "mark": "absent"},
-        {"number": "3", "date": None, "journal_date": None, "status": None, "mark": None},
+        {"number": "1", "date": "15.09", "journal_date": "16.09"},
+        {"number": "2", "date": "22.09", "journal_date": None},
+        {"number": "3", "date": None, "journal_date": None},
     ]
-    assert (page["score"], page["percent"]) == ("2", "66")
+    me, other = page["students"]
+    assert (me["number"], me["student_id"], me["name"], me["is_me"]) == ("1", "S1", "Me", True)
+    assert me["marks"] == [
+        {"session": "1", "status": "i", "mark": "present"},
+        {"session": "2", "status": "q", "mark": "absent"},
+        {"session": "3", "status": None, "mark": None},
+    ]
+    assert (me["score"], me["percent"]) == ("2", "66")
+    assert (other["student_id"], other["is_me"], other["score"], other["percent"]) == ("S2", False, "0", "100")
 
 
-def test_attendance_without_own_row_still_lists_sessions():
+def test_attendance_marks_nobody_as_me_when_username_differs():
     scraper = FakeScraper()
     scraper.username = "someone-else"
-    two_rows = _attend('<tbody><tr><th>1</th><th>A</th><th>n</th><td></td><td></td><td></td><td></td><td>1</td><td>1</td></tr></tbody>'
-                       '<tbody><tr><th>2</th><th>B</th><th>n</th><td></td><td></td><td></td><td></td><td>2</td><td>2</td></tr></tbody>')
-    TAB_PAGES["lecture_attend"] = two_rows
-    try:
-        page = courses.course_attendance(scraper, "7")
-    finally:
-        TAB_PAGES["lecture_attend"] = ATTEND
-    assert [s["number"] for s in page["sessions"]] == ["1", "2", "3"]
-    assert all(s["status"] is None for s in page["sessions"]) and page["score"] is None
+    assert [s["is_me"] for s in courses.course_attendance(scraper, "7")["students"]] == [False, False]
 
 
 def test_plan_info_read_from_live_table():
