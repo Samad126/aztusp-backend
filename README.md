@@ -134,7 +134,7 @@ app/
     courses.py       course list and lecture plan scraping
     cookies.py       shares session cookies across portal subdomains
 tests/               pytest suite
-deploy/nginx/   nginx config for the API and frontend domains
+deploy/nginx/   nginx config for the API domain
 .github/workflows/ci.yml   tests, then deploy to the server
 ```
 
@@ -154,7 +154,7 @@ GitHub Actions secrets (Settings → Secrets and variables → Actions):
 | `SSH_PASSWORD` | That user's password |
 
 On the server, the checkout needs a `.env` next to `docker-compose.yml`. The API binds to
-`127.0.0.1:3003`; put nginx in front of it using [deploy/nginx/aztu.alakbaroff.com.conf](deploy/nginx/aztu.alakbaroff.com.conf).
+`127.0.0.1:3003`; put nginx in front of it using [deploy/nginx/aztuapi.alakbaroff.com.conf](deploy/nginx/aztuapi.alakbaroff.com.conf).
 The nginx config is not installed by the workflow; copy it to `/etc/nginx/conf.d/` and reload nginx by hand.
 
 ## Disclaimer
