@@ -48,6 +48,9 @@ def client(store, monkeypatch):
         "lecture_plan",
         lambda scraper, idx: {"params": {"lec_open_idx": idx}, "course": "Math", "semester": None, "info": None, "blocks": [{"title": "T", "text": "x"}]},
     )
+    monkeypatch.setattr(
+        courses, "course_page", lambda scraper, idx, name: {"params": {"lec_open_idx": idx}, "blocks": [{"title": name, "rows": [{"a": "b"}]}]}
+    )
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -88,6 +91,13 @@ def test_courses(client):
     headers = login(client)
     assert client.get("/api/v1/courses", headers=headers).json()[0]["lec_open_idx"] == "7"
     assert client.get("/api/v1/courses/7/plan", headers=headers).json()["blocks"] == [{"title": "T", "text": "x"}]
+
+
+@pytest.mark.parametrize("name", ["notices", "board", "materials", "tasks", "scores", "attendance"])
+def test_course_tabs(client, name):
+    response = client.get(f"/api/v1/courses/7/{name}", headers=login(client))
+    assert response.status_code == 200
+    assert response.json()["blocks"][0]["title"] == name
 
 
 def test_expired_site_session_is_401(client, monkeypatch):

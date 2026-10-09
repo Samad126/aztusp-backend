@@ -52,6 +52,11 @@ class PlanBlock(BaseModel):
     text: str | None = Field(default=None, description="Present when the block is plain text.")
 
 
+class CoursePage(BaseModel):
+    params: dict[str, str] = Field(description="Ids that identify the course on the site.")
+    blocks: list[PlanBlock] = Field(description="Tables found on the page, in page order; each row is a record.")
+
+
 class LecturePlan(BaseModel):
     params: dict[str, str] = Field(description="Ids that identify the course on the site.")
     course: str | None

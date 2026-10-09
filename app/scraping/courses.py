@@ -76,12 +76,70 @@ def course_params(scraper: SiteScraper, lec_open_idx: str) -> dict[str, str]:
     raise CourseNotFound(f"No lecture_code found on {page_url}")
 
 
+# API name -> page file under /studies/ for the other course tabs.
+COURSE_PAGES = {
+    "notices": "lecture_notice",
+    "board": "lecture_board",
+    "materials": "lecture_data",
+    "tasks": "lecture_task",
+    "scores": "lecture_score",
+    "attendance": "lecture_attend",
+}
+
+TITLE_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6", "legend", "caption")
+
+
+def _tab_url(scraper: SiteScraper, page: str, params: dict[str, str]) -> str:
+    return urljoin(scraper.settings.dashboard_url, f"/studies/{page}.php") + "?" + urlencode(params)
+
+
+def course_page(scraper: SiteScraper, lec_open_idx: str, name: str) -> dict:
+    """A course tab (notices, board, materials, tasks, scores, attendance) as titled tables.
+
+    The tabs share one layout, so they are read generically: every innermost table becomes a
+    block of records (first row = column names), titled by the closest heading before it.
+    Links inside a row are kept under "link" (first one) so files and posts can be opened.
+    """
+    params = course_params(scraper, lec_open_idx)
+    url = _tab_url(scraper, COURSE_PAGES[name], params)
+    soup = scraper.fetch(url, headers=PJAX_HEADERS)
+
+    blocks = []
+    for number, table in enumerate((t for t in soup.find_all("table") if t.find("table") is None), start=1):
+        rows = _table_records(table, url)
+        if rows:
+            blocks.append({"title": _table_title(table) or f"Table {number}", "rows": rows})
+    return {"params": params, "blocks": blocks}
+
+
+def _table_title(table: Tag) -> str | None:
+    heading = table.find_previous(lambda tag: tag.name in TITLE_TAGS or "main_title" in (tag.get("class") or [""])[0])
+    return heading.get_text(" ", strip=True) if heading else None
+
+
+def _table_records(table: Tag, page_url: str) -> list[dict[str, str]]:
+    """Records for any table: the first row names the columns; rows of another width get column_N names."""
+    rows = [row.find_all(["td", "th"], recursive=False) for row in table.find_all("tr")]
+    rows = [cells for cells in rows if cells]
+    if len(rows) < 2:
+        return []
+    headers = [" ".join(cell.get_text(" ", strip=True).split()) for cell in rows[0]]
+    keys = [FIELD_MAP.get(label) or label or f"column_{i}" for i, label in enumerate(headers, 1)]
+    records = []
+    for cells in rows[1:]:
+        row_keys = keys if len(cells) == len(keys) else [f"column_{i}" for i in range(1, len(cells) + 1)]
+        record = {key: cell.get_text(" ", strip=True) for key, cell in zip(row_keys, cells)}
+        link = next((a["href"] for cell in cells for a in cell.find_all("a", href=True) if not a["href"].startswith(("#", "javascript:"))), None)
+        if link:
+            record["link"] = urljoin(page_url, link)
+        records.append(record)
+    return records
+
+
 def lecture_plan(scraper: SiteScraper, lec_open_idx: str) -> dict:
     """Course info plus every titled block (table or text) of the lecture plan page."""
     params = course_params(scraper, lec_open_idx)
-    url = urljoin(scraper.settings.dashboard_url, "/studies/lecture_plan.php")
-    query = urlencode(params)
-    soup = scraper.fetch(f"{url}?{query}", headers=PJAX_HEADERS)
+    soup = scraper.fetch(_tab_url(scraper, "lecture_plan", params), headers=PJAX_HEADERS)
 
     plan: dict = {"params": params, "course": None, "semester": None, "info": None, "blocks": []}
 
