@@ -10,7 +10,7 @@ on:
 # Serialise deploys: two overlapping `docker compose up --build` runs against the
 # same checkout would collide. Let an in-flight deploy finish instead of cancelling it.
 concurrency:
-  group: deploy-aztusp
+  group: deploy-aztusp-backend
   cancel-in-progress: false
 
 jobs:
@@ -42,7 +42,7 @@ jobs:
             set -e
 
             # Must already be a git clone of this repo, with a .env next to docker-compose.yml.
-            APP_DIR=/pool/www/CHANGE-ME/aztusp
+            APP_DIR=/pool/www/CHANGE-ME/aztusp-backend
             API_PORT=8000
 
             git config --global --add safe.directory "$APP_DIR"
