@@ -4,6 +4,61 @@ from app.scraping import courses
 
 HOME = '<a href="/studies/index.php?lec_open_idx=7&sem_cd=S1&lecture_name=Math">x</a><a href="/other">y</a>'
 COURSE = '<a href="/x?lecture_code=MA1&sem_code=S2">tab</a>'
+TITLE = '<h6 class="page-title float-left">Math     ( M1 ) </h6>'
+
+EMPTY_LIST = TITLE + """<div id="secondary_content"><div style="display: none"><table id="op_list"><tr><td>Nömrə</td><td>Movzu</td></tr>
+<tr><td colspan="2">Qeyd olunmuş material yoxdur</td></tr></table></div>
+<table id="op_list" class="table"><thead><tr><th>Nömrə</th><th>Movzu</th><th>Müəllif</th><th>Tarix</th><th>Müraciətlərin sayı</th></tr></thead>
+<tbody><tr><td colspan="5">Qeyd olunmuş material yoxdur</td></tr></tbody></table></div>"""
+
+FILLED_LIST = TITLE + """<div id="secondary_content"><table id="op_list"><thead><tr><th>Nömrə</th><th>Movzu</th><th>Müəllif</th><th>Tarix</th><th>Müraciətlərin sayı</th></tr></thead>
+<tbody><tr onclick="send_view(12)"><td>1</td><td>Syllabus</td><td>Dr. X</td><td>2026-09-20</td><td>4</td></tr>
+<tr><td>2</td><td><a href="/files/a.pdf">Slides</a></td><td>Dr. X</td><td>2026-09-27</td><td>0</td></tr></tbody></table></div>"""
+
+TASKS = TITLE + """<div id="secondary_content"><table id="datatable-task"><thead><tr><th>Nömrə</th><th>Sərbəst işin növü</th><th>Qiymətləndirmə</th><th>Movzu</th><th></th><th>Başlanğıc</th><th>Son gun</th></tr></thead>
+<tbody><tr><td colspan="8">Qeyd olunmuş material yoxdur</td></tr></tbody></table></div>"""
+
+SCORES = TITLE + """<div id="secondary_content"><table id="toplam_score"><tbody class="text-center">
+<!-- <tr><td><b>Adı</td></tr> -->
+<tr><td>sərbəst iş(10)</td><td>Məşğələ(30)</td><td>Davamiyyət</td><td><b>Toplam</b></td></tr>
+<tr><td><input type="hidden" value="0"><font>7</font></td><td><input type="hidden" value="0"><font>0</font></td>
+<td><input type="hidden" value="0"></td><td><input type="hidden" value="0">7</td></tr></tbody></table>
+<p class="text-danger"><i><b>*Qeyd:</b> Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır.</i></p></div>"""
+
+
+def _attend(rows: str, own_id: str = "S1") -> str:
+    head = "".join(f'<th colspan="1">{i}</th>' for i in range(1, 4))
+    blank = "<th></th>" * 3
+    dates = "".join(f"<th><font>{d}</font></th>" for d in ("15.09", "22.09", ""))
+    journal = "".join(f"<th><font>{d}</font></th>" for d in ("16.09", "", ""))
+    return TITLE + f"""<div id="secondary_content">
+<table id="op_list"><tbody>
+<tr><td>Fənnin adı<!-- x --></td><td>Saatların cəmi</td><td>Həftəlik dərs saatları</td><td>Kredit</td><td rowspan="2">2026.09.15 - 2026.12.31</td><td>Qrup</td><td>Müəllim</td></tr>
+<tr><td>Math</td><td>30</td><td></td><td>6</td><td>M1</td><td>Dr. X</td></tr>
+<tr><td>Davamiyyət : i/e</td><td>q/b</td></tr></tbody></table>
+<table id="datatable-buttons"><thead><tr></tr>
+<tr><th rowspan="2">Nömrə</th><th rowspan="2">İdentifikator</th><th rowspan="2">Adı</th>{head}<th rowspan="38"></th><th>Bal</th><th>Davamiyyət faizi</th></tr>
+<tr>{blank}<th>0</th><th>100%</th></tr>
+<tr><th colspan="3">Dərsin tarixi</th>{dates}<th></th><th></th></tr>
+<tr><th colspan="3">Jurnalın yazılma tarixi</th>{journal}<th></th><th></th></tr></thead>
+{rows.replace("{own}", own_id)}</table></div>"""
+
+
+ATTEND = _attend(
+    '<tbody><tr><th>1</th><th>{own}</th><th>Name</th>'
+    '<td><span class="attend-label ie">i</span></td><td><span class="attend-label qb">q</span></td><td></td>'
+    '<td></td><td>2</td><td>66</td></tr></tbody>'
+)
+
+TAB_PAGES = {
+    "lecture_notice": EMPTY_LIST,
+    "lecture_board": FILLED_LIST,
+    "lecture_data": EMPTY_LIST,
+    "lecture_task": TASKS,
+    "lecture_score": SCORES,
+    "lecture_attend": ATTEND,
+}
+
 PLAN = """
 <td class="list_title1">Dərsin adı : Math</td><td>Fall</td>
 <span class="main_title2">Books</span><table><tr><td>Müəllif</td><td>Ad</td></tr><tr><td>Bob</td><td>Book</td></tr></table>
@@ -11,17 +66,9 @@ PLAN = """
 """
 
 
-TAB = """
-<span class="main_title2">Scores</span>
-<table><tr><td>Fənnlər</td><td>Yekun bal</td><td>Fayl</td></tr>
-<tr><td>Quiz 1</td><td>8</td><td><a href="/files/q1.pdf">q1</a></td></tr>
-<tr><td colspan="2">odd row</td></tr></table>
-<table><tr><td>only header</td></tr></table>
-<table><tr><td>layout <table><tr><th>A</th></tr><tr><td>1</td></tr></table></td></tr></table>
-"""
-
-
 class FakeScraper:
+    username = "S1"
+
     class settings:
         dashboard_url = "https://d.example.com/app/"
 
@@ -30,7 +77,13 @@ class FakeScraper:
 
     def fetch(self, url, headers=None):
         self.urls.append(url)
-        html = PLAN if "lecture_plan" in url else TAB if "lecture_score" in url else COURSE if "lec_open_idx=7" in url and "index.php" in url else HOME
+        if "/studies/lecture_" in url:
+            page = url.split("/studies/")[1].split(".php")[0]
+            html = PLAN if page == "lecture_plan" else TAB_PAGES[page]
+        elif "lec_open_idx=7" in url and "index.php" in url:
+            html = COURSE
+        else:
+            html = HOME
         return BeautifulSoup(html, "html.parser")
 
 
@@ -59,18 +112,64 @@ def test_unknown_course():
         courses.course_params(FakeScraper(), "999")
 
 
-def test_course_page_reads_titled_tables_with_links():
+def test_list_tab_empty_state_gives_no_items_and_ignores_hidden_table():
     scraper = FakeScraper()
-    page = courses.course_page(scraper, "7", "scores")
-    assert scraper.urls[-1].endswith("/studies/lecture_score.php?lec_open_idx=7&lecture_code=MA1&sem_code=S2")
-    assert page["params"]["lecture_code"] == "MA1"
-    assert page["blocks"][0] == {
-        "title": "Scores",
-        "rows": [
-            {"course": "Quiz 1", "final_score": "8", "Fayl": "q1", "link": "https://d.example.com/files/q1.pdf"},
-            {"column_1": "odd row"},
-        ],
+    page = courses.course_items(scraper, "7", "notices")
+    assert scraper.urls[-1].endswith("/studies/lecture_notice.php?lec_open_idx=7&lecture_code=MA1&sem_code=S2")
+    assert page == {"params": {"lec_open_idx": "7", "lecture_code": "MA1", "sem_code": "S2"}, "course": "Math ( M1 )", "items": []}
+    assert courses.course_items(scraper, "7", "tasks")["items"] == []
+
+
+def test_list_tab_rows_get_english_keys_ids_and_links():
+    page = courses.course_items(FakeScraper(), "7", "board")
+    assert page["items"] == [
+        {"number": "1", "subject": "Syllabus", "author": "Dr. X", "date": "2026-09-20", "views": "4", "id": "12"},
+        {"number": "2", "subject": "Slides", "author": "Dr. X", "date": "2026-09-27", "views": "0", "link": "https://d.example.com/files/a.pdf"},
+    ]
+
+
+def test_scores_split_into_components_and_total():
+    page = courses.course_scores(FakeScraper(), "7")
+    assert page["components"] == [
+        {"name": "sərbəst iş", "max": "10", "score": "7"},
+        {"name": "Məşğələ", "max": "30", "score": "0"},
+        {"name": "Davamiyyət", "max": None, "score": None},
+    ]
+    assert page["total"] == "7"
+    assert page["notes"] == ["*Qeyd: Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır."]
+
+
+def test_attendance_reads_own_row_with_dates_and_marks():
+    page = courses.course_attendance(FakeScraper(), "7")
+    assert page["info"] == {
+        "course": "Math", "total_hours": "30", "weekly_hours": "", "credits": "6", "group": "M1", "teacher": "Dr. X",
+        "period": "2026.09.15 - 2026.12.31",
     }
-    # layout tables are skipped in favour of the table nested inside them
-    assert page["blocks"][1] == {"title": "Scores", "rows": [{"A": "1"}]}
-    assert len(page["blocks"]) == 2
+    assert page["sessions"] == [
+        {"number": "1", "date": "15.09", "journal_date": "16.09", "status": "i", "mark": "present"},
+        {"number": "2", "date": "22.09", "journal_date": None, "status": "q", "mark": "absent"},
+        {"number": "3", "date": None, "journal_date": None, "status": None, "mark": None},
+    ]
+    assert (page["score"], page["percent"]) == ("2", "66")
+
+
+def test_attendance_without_own_row_still_lists_sessions():
+    scraper = FakeScraper()
+    scraper.username = "someone-else"
+    two_rows = _attend('<tbody><tr><th>1</th><th>A</th><th>n</th><td></td><td></td><td></td><td></td><td>1</td><td>1</td></tr></tbody>'
+                       '<tbody><tr><th>2</th><th>B</th><th>n</th><td></td><td></td><td></td><td></td><td>2</td><td>2</td></tr></tbody>')
+    TAB_PAGES["lecture_attend"] = two_rows
+    try:
+        page = courses.course_attendance(scraper, "7")
+    finally:
+        TAB_PAGES["lecture_attend"] = ATTEND
+    assert [s["number"] for s in page["sessions"]] == ["1", "2", "3"]
+    assert all(s["status"] is None for s in page["sessions"]) and page["score"] is None
+
+
+def test_plan_info_read_from_live_table():
+    live = PLAN + """<table><thead><tr><th>Professor adı</th><th>Kredit</th></tr></thead><tbody><tr><td>Dr. X</td><td>6</td></tr></tbody></table>"""
+    class Scraper(FakeScraper):
+        def fetch(self, url, headers=None):
+            return BeautifulSoup(live, "html.parser") if "lecture_plan" in url else super().fetch(url, headers)
+    assert courses.lecture_plan(Scraper(), "7")["info"] == {"professor": "Dr. X", "credits": "6"}

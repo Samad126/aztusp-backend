@@ -86,54 +86,195 @@ COURSE_PAGES = {
     "attendance": "lecture_attend",
 }
 
-TITLE_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6", "legend", "caption")
+# Column labels of the list tabs (notices, board, materials, tasks); anything else falls back to FIELD_MAP.
+TAB_COLUMN_MAP = {
+    "Tarix": "date",
+    "Sərbəst işin növü": "task_type",
+    "Qiymətləndirmə": "evaluation",
+    "Başlanğıc": "start_date",
+    "Son gun": "end_date",
+}
+
+ATTEND_INFO_MAP = {
+    "Fənnin adı": "course",
+    "Saatların cəmi": "total_hours",
+    "Həftəlik dərs saatları": "weekly_hours",
+    "Kredit": "credits",
+    "Qrup": "group",
+    "Müəllim": "teacher",
+}
+
+# CSS classes of the attendance marks (see the legend on the page: i/e present, q/b absent, d/e not entered).
+ATTEND_MARKS = {"ie": "present", "qb": "absent", "nd": "not_entered"}
+
+SEND_VIEW = re.compile(r"send_view\(\s*['\"]?([^'\")\s]+)")
+SCORE_LABEL = re.compile(r"^(.*?)\s*\(\s*(\d+(?:[.,]\d+)?)\s*\)$")
 
 
 def _tab_url(scraper: SiteScraper, page: str, params: dict[str, str]) -> str:
     return urljoin(scraper.settings.dashboard_url, f"/studies/{page}.php") + "?" + urlencode(params)
 
 
-def course_page(scraper: SiteScraper, lec_open_idx: str, name: str) -> dict:
-    """A course tab (notices, board, materials, tasks, scores, attendance) as titled tables.
-
-    The tabs share one layout, so they are read generically: every innermost table becomes a
-    block of records (first row = column names), titled by the closest heading before it.
-    Links inside a row are kept under "link" (first one) so files and posts can be opened.
-    """
+def _fetch_tab(scraper: SiteScraper, lec_open_idx: str, name: str) -> tuple[dict[str, str], Tag | BeautifulSoup, str | None, str]:
+    """Fetch one course tab: (ids, the tab's content, course heading, page url)."""
     params = course_params(scraper, lec_open_idx)
     url = _tab_url(scraper, COURSE_PAGES[name], params)
     soup = scraper.fetch(url, headers=PJAX_HEADERS)
-
-    blocks = []
-    for number, table in enumerate((t for t in soup.find_all("table") if t.find("table") is None), start=1):
-        rows = _table_records(table, url)
-        if rows:
-            blocks.append({"title": _table_title(table) or f"Table {number}", "rows": rows})
-    return {"params": params, "blocks": blocks}
+    heading = soup.select_one("h6.page-title")
+    course = _clean(heading.get_text(" ", strip=True)) if heading else None
+    return params, soup.select_one("#secondary_content") or soup, course, url
 
 
-def _table_title(table: Tag) -> str | None:
-    heading = table.find_previous(lambda tag: tag.name in TITLE_TAGS or "main_title" in (tag.get("class") or [""])[0])
-    return heading.get_text(" ", strip=True) if heading else None
+def _clean(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _is_hidden(tag: Tag) -> bool:
+    """True if the element or an ancestor has an inline display:none (the site keeps old layouts hidden)."""
+    return any("display:none" in (el.get("style") or "").replace(" ", "").lower() for el in (tag, *tag.parents) if isinstance(el, Tag))
+
+
+def _visible_tables(content: Tag | BeautifulSoup) -> list[Tag]:
+    return [table for table in content.find_all("table") if not _is_hidden(table)]
+
+
+def course_items(scraper: SiteScraper, lec_open_idx: str, name: str) -> dict:
+    """A list tab (notices, board, materials, tasks) as records. An empty list means nothing was posted."""
+    params, content, course, url = _fetch_tab(scraper, lec_open_idx, name)
+    tables = _visible_tables(content)
+    table = next((t for t in tables if t.find("thead")), None) or next((t for t in tables if t.get("id") == "op_list"), None)
+    return {"params": params, "course": course, "items": _table_records(table, url) if table else []}
 
 
 def _table_records(table: Tag, page_url: str) -> list[dict[str, str]]:
-    """Records for any table: the first row names the columns; rows of another width get column_N names."""
-    rows = [row.find_all(["td", "th"], recursive=False) for row in table.find_all("tr")]
-    rows = [cells for cells in rows if cells]
+    """Records for a list table: the first row names the columns.
+
+    A lone cell spanning the table ("Qeyd olunmuş material yoxdur") is the site's empty state and is
+    skipped. When a row opens a detail view with send_view(<id>), that id is returned as "id", and the
+    first link in a row as "link".
+    """
+    rows = [(row, row.find_all(["td", "th"], recursive=False)) for row in table.find_all("tr")]
+    rows = [(row, cells) for row, cells in rows if cells]
     if len(rows) < 2:
         return []
-    headers = [" ".join(cell.get_text(" ", strip=True).split()) for cell in rows[0]]
-    keys = [FIELD_MAP.get(label) or label or f"column_{i}" for i, label in enumerate(headers, 1)]
+    labels = [_clean(cell.get_text(" ", strip=True)) for cell in rows[0][1]]
+    keys = [TAB_COLUMN_MAP.get(label) or FIELD_MAP.get(label) or label or f"column_{i}" for i, label in enumerate(labels, 1)]
+
     records = []
-    for cells in rows[1:]:
+    for row, cells in rows[1:]:
+        if len(cells) == 1 and (cells[0].get("colspan") or len(keys) > 1):
+            continue
         row_keys = keys if len(cells) == len(keys) else [f"column_{i}" for i in range(1, len(cells) + 1)]
         record = {key: cell.get_text(" ", strip=True) for key, cell in zip(row_keys, cells)}
-        link = next((a["href"] for cell in cells for a in cell.find_all("a", href=True) if not a["href"].startswith(("#", "javascript:"))), None)
+        if (detail_id := _detail_id(row)) is not None:
+            record["id"] = detail_id
+        link = next((a["href"] for a in row.find_all("a", href=True) if not a["href"].startswith(("#", "javascript:"))), None)
         if link:
             record["link"] = urljoin(page_url, link)
         records.append(record)
     return records
+
+
+def _detail_id(row: Tag) -> str | None:
+    for el in (row, *row.find_all(attrs={"onclick": True}), *row.find_all("a", href=True)):
+        match = SEND_VIEW.search((el.get("onclick") or "") + " " + (el.get("href") or ""))
+        if match:
+            return match.group(1)
+    return None
+
+
+def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
+    """Current scores: one component per column of the score table (name, maximum, score) plus the total."""
+    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "scores")
+    result: dict = {"params": params, "course": course, "components": [], "total": None, "notes": []}
+
+    table = content.select_one("table#toplam_score")
+    grid = _grid(table) if table else []
+    if len(grid) >= 2:
+        for label, value in zip(grid[0], grid[1]):
+            label = _clean(label)
+            if label.lower().startswith("toplam"):
+                result["total"] = value or None
+                continue
+            match = SCORE_LABEL.match(label)
+            name, maximum = (match.group(1), match.group(2)) if match else (label, None)
+            result["components"].append({"name": name, "max": maximum, "score": value or None})
+
+    result["notes"] = [_clean(p.get_text(" ", strip=True)) for p in content.select("p.text-danger")]
+    return result
+
+
+def course_attendance(scraper: SiteScraper, lec_open_idx: str) -> dict:
+    """Attendance journal of the logged-in student: one entry per class meeting, plus score and percentage."""
+    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "attendance")
+    result: dict = {"params": params, "course": course, "info": {}, "sessions": [], "score": None, "percent": None}
+
+    tables = _visible_tables(content)
+    info_table = next((t for t in tables if t.get("id") == "op_list"), None)
+    if info_table is not None:
+        result["info"] = _attendance_info(info_table)
+
+    journal = next((t for t in tables if t.get("id") == "datatable-buttons"), None)
+    if journal is None:
+        return result
+
+    head = {}
+    for row in (journal.find("thead") or journal).find_all("tr"):
+        cells = row.find_all(["th", "td"], recursive=False)
+        if cells:
+            head[_clean(cells[0].get_text(" ", strip=True))] = cells
+    numbers = [_clean(c.get_text(" ", strip=True)) for c in head.get("Nömrə", [])[3:] if _clean(c.get_text(" ", strip=True)).isdigit()]
+    dates = _cell_texts(head, "Dərsin tarixi", len(numbers))
+    journal_dates = _cell_texts(head, "Jurnalın yazılma tarixi", len(numbers))
+
+    cells = _own_row(journal, numbers, getattr(scraper, "username", ""))
+    marks = cells[3 : 3 + len(numbers)] if cells else []
+    tail = cells[3 + len(numbers) :] if cells else []
+    for i, number in enumerate(numbers):
+        cell = marks[i] if i < len(marks) else None
+        classes = {c for el in (cell.select("[class]") if cell else []) for c in el.get("class", [])}
+        result["sessions"].append(
+            {
+                "number": number,
+                "date": dates[i] or None,
+                "journal_date": journal_dates[i] or None,
+                "status": (_clean(cell.get_text(" ", strip=True)) or None) if cell else None,
+                "mark": next((ATTEND_MARKS[c] for c in classes if c in ATTEND_MARKS), None),
+            }
+        )
+    if len(tail) >= 2:
+        result["score"] = _clean(tail[-2].get_text(" ", strip=True)) or None
+        result["percent"] = _clean(tail[-1].get_text(" ", strip=True)) or None
+    return result
+
+
+def _attendance_info(table: Tag) -> dict[str, str]:
+    """Course summary: labels in the first row (one cell spans two rows and holds the dates), values in the second."""
+    rows = [row.find_all(["td", "th"], recursive=False) for row in table.find_all("tr")]
+    if len(rows) < 2:
+        return {}
+    labels = [c for c in rows[0] if not c.get("rowspan")]
+    info = {ATTEND_INFO_MAP.get(_clean(l.get_text(" ", strip=True)), _clean(l.get_text(" ", strip=True))): _clean(v.get_text(" ", strip=True)) for l, v in zip(labels, rows[1])}
+    if period := next((c for c in rows[0] if c.get("rowspan")), None):
+        info["period"] = _clean(period.get_text(" ", strip=True))
+    return info
+
+
+def _cell_texts(head: dict[str, list[Tag]], label: str, count: int) -> list[str]:
+    cells = head.get(label, [])[1 : 1 + count]
+    texts = [_clean(c.get_text(" ", strip=True)) for c in cells]
+    return texts + [""] * (count - len(texts))
+
+
+def _own_row(journal: Tag, numbers: list[str], username: str) -> list[Tag] | None:
+    """The journal row of this student: the one whose identifier column matches, else the only data row."""
+    rows = [
+        cells
+        for row in journal.find_all("tr")
+        if row.find_parent("thead") is None and len(cells := row.find_all(["th", "td"], recursive=False)) >= 3 + len(numbers)
+    ]
+    own = next((c for c in rows if _clean(c[1].get_text(" ", strip=True)).lower() == username.lower()), None)
+    return own or (rows[0] if len(rows) == 1 else None)
 
 
 def lecture_plan(scraper: SiteScraper, lec_open_idx: str) -> dict:
@@ -170,9 +311,13 @@ def lecture_plan(scraper: SiteScraper, lec_open_idx: str) -> dict:
 def _plan_info(soup: BeautifulSoup) -> dict[str, str] | None:
     """Professor / department / credits row.
 
-    The page has unbalanced <!-- comments, so this table is parsed as part of a comment
-    string instead of as markup; read its cells straight from the text.
+    Read it from the table when the page has one. Older pages had unbalanced <!-- comments, so
+    the table ended up inside a comment string; then read its cells straight from the text.
     """
+    for table in soup.find_all("table"):
+        grid = _grid(table)
+        if len(grid) >= 2 and "Professor adı" in grid[0] and len(grid[0]) == len(grid[1]):
+            return {PLAN_INFO_MAP.get(label, label): value for label, value in zip(grid[0], grid[1])}
     text = soup.find(string=lambda s: s and "Professor adı" in s)
     if text is None:
         return None

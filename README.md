@@ -40,14 +40,14 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `GET` | `/api/v1/courses` | ✔ | Courses linked from the dashboard |
 | `GET` | `/api/v1/courses/{lec_open_idx}/plan` | ✔ | Lecture plan of one course |
-| `GET` | `/api/v1/courses/{lec_open_idx}/notices` | ✔ | Course notices |
-| `GET` | `/api/v1/courses/{lec_open_idx}/board` | ✔ | Course board |
-| `GET` | `/api/v1/courses/{lec_open_idx}/materials` | ✔ | Course materials (lecture data) |
-| `GET` | `/api/v1/courses/{lec_open_idx}/tasks` | ✔ | Course tasks |
-| `GET` | `/api/v1/courses/{lec_open_idx}/scores` | ✔ | Course scores |
-| `GET` | `/api/v1/courses/{lec_open_idx}/attendance` | ✔ | Course attendance |
+| `GET` | `/api/v1/courses/{lec_open_idx}/notices` | ✔ | Course notices (Bildiriş) |
+| `GET` | `/api/v1/courses/{lec_open_idx}/board` | ✔ | Course forum (Forum) |
+| `GET` | `/api/v1/courses/{lec_open_idx}/materials` | ✔ | Course materials (Didaktik materiallar) |
+| `GET` | `/api/v1/courses/{lec_open_idx}/tasks` | ✔ | Course assessments and assignments (Qiymətləndirmə) |
+| `GET` | `/api/v1/courses/{lec_open_idx}/scores` | ✔ | Current points per component and the total |
+| `GET` | `/api/v1/courses/{lec_open_idx}/attendance` | ✔ | Attendance journal: per-class marks, score and percentage |
 
-The course tab endpoints (`notices`, `board`, `materials`, `tasks`, `scores`, `attendance`) return each page's tables as `blocks` of records, with any link in a row under `link`. They read pages generically, so column names are the site's own (Azerbaijani) unless listed in `FIELD_MAP`.
+The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows keyed in English (`subject`, `author`, `date`, `views`, ...), plus `id` when the row opens a detail view and `link` for its first link. An empty `items` means nothing was posted. `scores` returns `components` (name, max, score) and `total`; `attendance` returns `sessions` with dates and marks.
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 

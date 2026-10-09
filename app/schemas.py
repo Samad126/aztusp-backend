@@ -1,5 +1,7 @@
 """Request and response models for the HTTP API."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -52,9 +54,43 @@ class PlanBlock(BaseModel):
     text: str | None = Field(default=None, description="Present when the block is plain text.")
 
 
-class CoursePage(BaseModel):
+class CourseItems(BaseModel):
     params: dict[str, str] = Field(description="Ids that identify the course on the site.")
-    blocks: list[PlanBlock] = Field(description="Tables found on the page, in page order; each row is a record.")
+    course: str | None = Field(description="Course heading as shown on the site.")
+    items: list[dict[str, str]] = Field(
+        description="Rows of the list. Empty if nothing was posted. `id` (when present) identifies the entry on the site; `link` is its first link."
+    )
+
+
+class ScoreComponent(BaseModel):
+    name: str
+    max: str | None = Field(description="Maximum points, taken from the column title, e.g. `Məşğələ(30)`.")
+    score: str | None = Field(description="Points earned; `null` if not graded yet.")
+
+
+class CourseScores(BaseModel):
+    params: dict[str, str] = Field(description="Ids that identify the course on the site.")
+    course: str | None
+    components: list[ScoreComponent]
+    total: str | None = Field(description="Total (`Toplam`) as shown on the site.")
+    notes: list[str] = Field(description="Remarks printed under the table.")
+
+
+class AttendanceSession(BaseModel):
+    number: str = Field(description="Class meeting number, starting at 1.")
+    date: str | None = Field(description="Date of the class; `null` until it has been held.")
+    journal_date: str | None = Field(description="Date the teacher filled in the journal.")
+    status: str | None = Field(description="Mark text as shown on the site; `null` if empty.")
+    mark: Literal["present", "absent", "not_entered"] | None = Field(description="Mark classified by its colour class on the site.")
+
+
+class CourseAttendance(BaseModel):
+    params: dict[str, str] = Field(description="Ids that identify the course on the site.")
+    course: str | None
+    info: dict[str, str] = Field(description="Course summary: course, total_hours, weekly_hours, credits, group, teacher, period.")
+    sessions: list[AttendanceSession]
+    score: str | None = Field(description="Points for attendance (`Bal`).")
+    percent: str | None = Field(description="Attendance percentage (`Davamiyyət faizi`), without the % sign.")
 
 
 class LecturePlan(BaseModel):

@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Saved portal pages used while developing parsers (contain personal data)
+samples/
+*.sample.html
