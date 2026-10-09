@@ -1,9 +1,9 @@
 import re
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
-from .scraper import PJAX_HEADERS, SiteScraper
+from .client import PJAX_HEADERS, SiteScraper
 from .targets import FIELD_MAP
 
 
@@ -77,9 +77,10 @@ def course_params(scraper: SiteScraper, lec_open_idx: str) -> dict[str, str]:
 
 
 def lecture_plan(scraper: SiteScraper, lec_open_idx: str) -> dict:
+    """Course info plus every titled block (table or text) of the lecture plan page."""
     params = course_params(scraper, lec_open_idx)
     url = urljoin(scraper.settings.dashboard_url, "/studies/lecture_plan.php")
-    query = "&".join(f"{k}={v}" for k, v in params.items())
+    query = urlencode(params)
     soup = scraper.fetch(f"{url}?{query}", headers=PJAX_HEADERS)
 
     plan: dict = {"params": params, "course": None, "semester": None, "info": None, "blocks": []}
@@ -131,11 +132,6 @@ def _grid(table: Tag) -> list[list[str]]:
         [cell.get_text(" ", strip=True) for cell in row.find_all(["td", "th"], recursive=False)]
         for row in table.find_all("tr")
     ]
-
-
-def _first_row(table: Tag) -> list[str]:
-    grid = _grid(table)
-    return grid[0] if grid else []
 
 
 def _grid_records(table: Tag, key_map: dict[str, str]) -> list[dict[str, str]]:

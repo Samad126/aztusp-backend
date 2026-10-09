@@ -1,16 +1,18 @@
 import json
 import logging
 import threading
-from typing import Callable
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
 from requests.cookies import RequestsCookieJar, create_cookie
 
-from .config import Settings
+from ..config import Settings
 from .cookies import share_cookies_across_subdomains
-from .targets import FIELD_MAP, Target
+from .parsing import find_login_form, is_total, map_keys, parse_pairs, parse_table
+from .targets import Target
 
 log = logging.getLogger(__name__)
 
@@ -91,9 +93,8 @@ class SiteScraper:
         result["totals"] = {}
         for key, label in target.totals.items():
             rows = result["tables"].get(key, [])
-            is_total = lambda row: next(iter(row.values()), None) == label
-            result["totals"][key] = next((row for row in rows if is_total(row)), None)
-            result["tables"][key] = [row for row in rows if not is_total(row)]
+            result["totals"][key] = next((row for row in rows if is_total(row, label)), None)
+            result["tables"][key] = [row for row in rows if not is_total(row, label)]
         result["sections"] = {
             key: [
                 {
@@ -110,7 +111,7 @@ class SiteScraper:
         for key, selector in target.fields.items():
             element = soup.select_one(selector)
             result["fields"][key] = element.get_text(" ", strip=True) if element else None
-        return _map_keys(result)
+        return map_keys(result)
 
     def fetch(self, url: str, headers: dict[str, str] | None = None) -> BeautifulSoup:
         """Fetch a page, logging in again if the saved session is missing or expired."""
@@ -130,7 +131,7 @@ class SiteScraper:
         login_page = self._request("GET", settings.login_url)
         login_page.raise_for_status()
 
-        form = _find_login_form(login_page.text)
+        form = find_login_form(login_page.text)
         if form is None:
             raise LoginError(f"No password form found on {login_page.url}")
 
@@ -175,7 +176,7 @@ class SiteScraper:
                 return
         log.warning("No link to %s found on %s", dashboard_host, landing.url)
 
-    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+    def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         """Like session.request, but follows redirects one hop at a time.
 
         The cookie jar is shared across subdomains before each hop, so a redirect
@@ -202,82 +203,11 @@ class SiteScraper:
         # A password input only means "logged out" on the login host; dashboard pages
         # can contain unrelated ones (e.g. the exam password field on the student page).
         on_login_host = urlparse(response.url).netloc == urlparse(self.settings.login_url).netloc
-        return on_login_host and _find_login_form(response.text) is not None
+        return on_login_host and find_login_form(response.text) is not None
 
     def _save_cookies(self) -> None:
         if self._on_save:
             self._on_save(dump_cookies(self.session.cookies))
-
-
-def parse_table(table: Tag) -> list[dict[str, str]]:
-    """Turn an HTML <table> into a list of {column name: cell text} records."""
-    thead = table.find("thead")
-    # Some pages put <th> straight into <thead> without a <tr>.
-    header_row = (thead.find("tr") or thead) if thead else None
-    rows = table.select("tbody tr") or [
-        row for row in table.find_all("tr") if row.find_parent("thead") is None
-    ]
-    if header_row is None and rows and rows[0].find("th"):
-        header_row, rows = rows[0], rows[1:]
-
-    headers = (
-        [cell.get_text(" ", strip=True) for cell in header_row.find_all(["th", "td"], recursive=False)]
-        if header_row
-        else []
-    )
-
-    records = []
-    for row in rows:
-        cells = [cell.get_text(" ", strip=True) for cell in row.find_all(["td", "th"], recursive=False)]
-        if not cells:
-            continue
-        keys = _column_keys(headers, len(cells))
-        records.append(dict(zip(keys, cells)))
-    return records
-
-
-def _column_keys(headers: list[str], width: int) -> list[str]:
-    """Use the header names, falling back to column_N for blank or repeated ones."""
-    if len(headers) != width:
-        return [f"column_{i}" for i in range(1, width + 1)]
-    seen: set[str] = set()
-    keys = []
-    for i, name in enumerate(headers, start=1):
-        key = name if name and name not in seen else f"column_{i}"
-        seen.add(key)
-        keys.append(key)
-    return keys
-
-
-def _map_keys(result: dict) -> dict:
-    """Rename site labels to the English keys in FIELD_MAP; unknown labels are kept as-is."""
-
-    def rename(row):
-        return {FIELD_MAP.get(clean, clean): value for label, value in row.items() if (clean := " ".join(label.split()))}
-
-    result["tables"] = {k: [rename(r) for r in rows] for k, rows in result["tables"].items()}
-    result["pairs"] = {k: rename(row) for k, row in result["pairs"].items()}
-    result["totals"] = {k: rename(row) if row else row for k, row in result["totals"].items()}
-    result["sections"] = {
-        k: [{**sec, "rows": [rename(r) for r in sec["rows"]]} for sec in secs]
-        for k, secs in result["sections"].items()
-    }
-    return result
-
-
-def parse_pairs(table: Tag) -> dict[str, str]:
-    """Turn a two-column label/value <table> into {label: value}."""
-    pairs = {}
-    for row in table.find_all("tr"):
-        cells = row.find_all(["td", "th"], recursive=False)
-        if len(cells) == 2:
-            pairs[cells[0].get_text(" ", strip=True)] = cells[1].get_text(" ", strip=True)
-    return pairs
-
-
-def _find_login_form(html: str) -> Tag | None:
-    password_input = BeautifulSoup(html, "html.parser").find("input", attrs={"type": "password"})
-    return password_input.find_parent("form") if password_input else None
 
 
 def _form_payload(form: Tag) -> dict[str, str]:

@@ -2,7 +2,7 @@ import email
 import urllib.request
 from http.cookiejar import CookieJar
 
-from app.cookies import share_cookies_across_subdomains
+from app.scraping.cookies import share_cookies_across_subdomains
 
 
 class FakeResponse:

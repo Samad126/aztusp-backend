@@ -12,11 +12,10 @@ pages, and returns structured data with English field names.
 
 ## How it works
 
-1. `POST /auth/login` with the site username and password. The service signs in
+1. `POST /api/v1/auth/login` with the site username and password. The service signs in
    to the portal and returns an API token.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
-3. The service loads that user's saved portal session, scrapes the requested
-   page, and returns JSON.
+3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
 
 ### Privacy and security
 
@@ -32,14 +31,19 @@ raw OpenAPI document is at `/openapi.json`.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `POST` | `/auth/login` | – | Sign in with a site account, returns a token |
-| `POST` | `/auth/logout` | ✔ | Delete the token and stored session |
-| `GET` | `/health` | – | Health check |
-| `GET` | `/targets` | – | Names accepted by `/scrape/{name}` |
-| `GET` | `/scrape` | ✔ | Scrape every target |
-| `GET` | `/scrape/{name}` | ✔ | Scrape one target: `student`, `scores`, `schedule`, `notices` |
-| `GET` | `/courses` | ✔ | Courses linked from the dashboard |
-| `GET` | `/courses/{lec_open_idx}/plan` | ✔ | Lecture plan of one course |
+| `POST` | `/api/v1/auth/login` | – | Sign in with a site account, returns a token |
+| `POST` | `/api/v1/auth/logout` | ✔ | Delete the token and stored session |
+| `GET` | `/health` | – | Health check (unversioned) |
+| `GET` | `/api/v1/me/profile` | ✔ | Student profile |
+| `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
+| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable |
+| `GET` | `/api/v1/me/notices` | ✔ | Notices |
+| `GET` | `/api/v1/courses` | ✔ | Courses linked from the dashboard |
+| `GET` | `/api/v1/courses/{lec_open_idx}/plan` | ✔ | Lecture plan of one course |
+
+Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
+
+`/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
 Errors are returned as `{"detail": "..."}`: `401` bad/missing token or expired
 site session, `404` unknown target or course, `502` the portal is unreachable.
@@ -48,16 +52,16 @@ site session, `404` unknown target or course, `502` the portal is unreachable.
 
 ```bash
 # 1. log in and keep the token
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"username": "M0000000000", "password": "your-site-password"}' | jq -r .token)
 
 # 2. use it
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/scrape/scores
-curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/courses
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/me/scores
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/courses
 ```
 
-In Swagger UI, call `POST /auth/login`, click **Authorize**, and paste the token.
+In Swagger UI, call `POST /api/v1/auth/login`, click **Authorize**, and paste the token.
 
 ## Configuration
 
@@ -107,13 +111,21 @@ python -m pytest -q
 
 ```
 app/
-  main.py       FastAPI app, routes and OpenAPI models
-  scraper.py    portal login, session handling, HTML table parsing
-  targets.py    what to scrape (CSS selectors) and the field-name translations
-  courses.py    course list and lecture plan scraping
-  cookies.py    shares session cookies across portal subdomains
-  db.py         PostgreSQL user store (hashed tokens, encrypted cookies)
-  config.py     environment configuration
+  main.py            app factory: metadata, error handlers, router mounting under /api/v1
+  config.py          environment configuration
+  db.py              PostgreSQL user store (hashed tokens, encrypted cookies)
+  schemas.py         request/response models
+  api/
+    deps.py          settings, user store and per-request authenticated scraper
+    errors.py        exception -> HTTP status handlers, shared error responses
+    routers/         auth, me (profile/scores/...), courses, system (health)
+  scraping/
+    client.py        portal login, session handling, redirects
+    parsing.py       HTML table/pair parsing and field-name translation
+    targets.py       what to scrape (CSS selectors) and the field-name translations
+    courses.py       course list and lecture plan scraping
+    cookies.py       shares session cookies across portal subdomains
+tests/               pytest suite
 deploy/nginx/   nginx config for the API and frontend domains
 .github/workflows/ci.yml   tests, then deploy to the server
 ```

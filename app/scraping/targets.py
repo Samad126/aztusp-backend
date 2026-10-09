@@ -98,3 +98,6 @@ FIELD_MAP: dict[str, str] = {
     "Tərtib tarixi": "created_at",
     "Müraciətlərin sayı": "views",
 }
+
+
+TARGETS_BY_NAME: dict[str, Target] = {target.name: target for target in TARGETS}
