@@ -22,11 +22,10 @@ SCORES = TITLE + """<div id="secondary_content"><div class="container-fluid"><di
 <br><table id="toplam_score" class="table table-striped" border="1"><tbody class="text-center">
   <!--   <tr bgcolor="#F9F9FB" height="30" align="center">
     <td><b>Adı</td> -->
-            <tr><td>sərbəst iş(10)</td>
+            <td>sərbəst iş(10)</td>
                 <td>Məşğələ(30)</td>
             <td>Davamiyyət</td>
     <td><b>Toplam<!-- 총점 --></b></td>
-    </tr>
                 <tr height="24" align="center">
                 <td><input type="hidden" name="score_S1[]" id="score_S10" value="0"><font color="">7</font></td>
                 <td><input type="hidden" name="score_S1[]" id="score_S11" value="0"><font color="">0</font></td>
@@ -184,3 +183,17 @@ def test_plan_info_read_from_live_table():
         def fetch(self, url, headers=None):
             return BeautifulSoup(live, "html.parser") if "lecture_plan" in url else super().fetch(url, headers)
     assert courses.lecture_plan(Scraper(), "7")["info"] == {"professor": "Dr. X", "credits": "6"}
+
+
+def test_course_name_falls_back_to_dashboard_name_without_group_suffix():
+    class NoHeading(FakeScraper):
+        def fetch(self, url, headers=None):
+            soup = super().fetch(url, headers)
+            for heading in soup.select("h6.page-title"):
+                heading.decompose()
+            for anchor in soup.find_all("a", href=True):
+                anchor["href"] = anchor["href"].replace("lecture_name=Math", "lecture_name=Math%5BM1%5D")
+            return soup
+
+    for name in ("notices", "scores", "attendance"):
+        assert courses._fetch_tab(NoHeading(), "7", name)[2] == "Math"

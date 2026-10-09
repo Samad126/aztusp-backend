@@ -59,6 +59,11 @@ def list_courses(scraper: SiteScraper) -> list[dict]:
 
 def course_params(scraper: SiteScraper, lec_open_idx: str) -> dict[str, str]:
     """Query params shared by every course tab (lec_open_idx, lecture_code, sem_code)."""
+    return _course_context(scraper, lec_open_idx)[0]
+
+
+def _course_context(scraper: SiteScraper, lec_open_idx: str) -> tuple[dict[str, str], str]:
+    """The shared tab params plus the course's display name (the dashboard link text, without the `[group]` suffix)."""
     course = next((c for c in list_courses(scraper) if c["lec_open_idx"] == lec_open_idx), None)
     if course is None:
         raise CourseNotFound(f"No course with lec_open_idx={lec_open_idx}")
@@ -68,11 +73,12 @@ def course_params(scraper: SiteScraper, lec_open_idx: str) -> dict[str, str]:
     for anchor in soup.find_all("a", href=True):
         query = parse_qs(urlparse(anchor["href"]).query)
         if "lecture_code" in query:
-            return {
+            params = {
                 "lec_open_idx": lec_open_idx,
                 "lecture_code": query["lecture_code"][0],
                 "sem_code": query.get("sem_code", [course["sem_code"]])[0],
             }
+            return params, re.sub(r"\s*\[[^\]]*\]\s*$", "", course["name"]).strip()
     raise CourseNotFound(f"No lecture_code found on {page_url}")
 
 
@@ -117,11 +123,11 @@ def _tab_url(scraper: SiteScraper, page: str, params: dict[str, str]) -> str:
 
 def _fetch_tab(scraper: SiteScraper, lec_open_idx: str, name: str) -> tuple[dict[str, str], Tag | BeautifulSoup, str | None, str]:
     """Fetch one course tab: (ids, the tab's content, course heading, page url)."""
-    params = course_params(scraper, lec_open_idx)
+    params, course = _course_context(scraper, lec_open_idx)
     url = _tab_url(scraper, COURSE_PAGES[name], params)
     soup = scraper.fetch(url, headers=PJAX_HEADERS)
     heading = soup.select_one("h6.page-title")
-    course = _clean(heading.get_text(" ", strip=True)) if heading else None
+    course = _clean(heading.get_text(" ", strip=True)) if heading else course
     # The tab normally sits inside #secondary_content; if that box is empty or missing, use the whole page.
     box = soup.select_one("#secondary_content")
     return params, box if box is not None and box.find("table") else soup, course, url
