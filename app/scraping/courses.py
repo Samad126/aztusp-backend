@@ -191,7 +191,7 @@ def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
     result: dict = {"params": params, "course": course, "table": [], "components": [], "total": None, "notes": []}
 
     table = content.select_one("table#toplam_score") or _find_score_table(content)
-    grid = _grid(table) if table else []
+    grid = _score_grid(table) if table else []
     result["table"] = [{_clean(label): value for label, value in zip(grid[0], row)} for row in grid[1:]]
     if len(grid) >= 2:
         for label, value in zip(grid[0], grid[1]):
@@ -205,6 +205,12 @@ def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
 
     result["notes"] = [_clean(p.get_text(" ", strip=True)) for p in content.select("p.text-danger")]
     return result
+
+
+def _score_grid(table: Tag) -> list[list[str]]:
+    """Like _grid, but the portal puts the score table's header cells straight in <tbody> without a <tr>."""
+    loose = [c.get_text(" ", strip=True) for c in table.find_all(["td", "th"]) if c.find_parent("tr") is None]
+    return ([loose] if loose else []) + _grid(table)
 
 
 def _find_score_table(content: Tag | BeautifulSoup) -> Tag | None:
