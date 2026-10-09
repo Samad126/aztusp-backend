@@ -1,18 +1,17 @@
 import hashlib
 import secrets
-import sqlite3
-from contextlib import contextmanager
 from dataclasses import dataclass
 
+import psycopg
 from cryptography.fernet import Fernet, InvalidToken
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
     site_username TEXT NOT NULL UNIQUE,
     token_hash TEXT NOT NULL UNIQUE,
-    cookies_enc BLOB,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    cookies_enc BYTEA,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 """
 
@@ -31,20 +30,15 @@ def _hash(token: str) -> str:
 class UserStore:
     """Users, their API tokens (stored hashed) and their site session cookies (stored encrypted)."""
 
-    def __init__(self, path: str, secret_key: str):
-        self.path = path
+    def __init__(self, database_url: str, secret_key: str):
+        self.database_url = database_url
         self.fernet = Fernet(secret_key.encode())
         with self._connect() as db:
             db.execute(SCHEMA)
 
-    @contextmanager
-    def _connect(self):
-        db = sqlite3.connect(self.path)
-        try:
-            with db:  # commit or roll back
-                yield db
-        finally:
-            db.close()
+    def _connect(self) -> psycopg.Connection:
+        # `with` commits (or rolls back) and closes the connection.
+        return psycopg.connect(self.database_url)
 
     def upsert_login(self, site_username: str, cookies: str) -> str:
         """Create or update the user after a successful site login; returns a fresh API token."""
@@ -52,7 +46,7 @@ class UserStore:
         encrypted = self.fernet.encrypt(cookies.encode())
         with self._connect() as db:
             db.execute(
-                "INSERT INTO users (site_username, token_hash, cookies_enc) VALUES (?, ?, ?) "
+                "INSERT INTO users (site_username, token_hash, cookies_enc) VALUES (%s, %s, %s) "
                 "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, cookies_enc = excluded.cookies_enc",
                 (site_username, _hash(token), encrypted),
             )
@@ -61,7 +55,7 @@ class UserStore:
     def get_by_token(self, token: str) -> User | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, site_username, cookies_enc FROM users WHERE token_hash = ?", (_hash(token),)
+                "SELECT id, site_username, cookies_enc FROM users WHERE token_hash = %s", (_hash(token),)
             ).fetchone()
         if row is None:
             return None
@@ -75,9 +69,9 @@ class UserStore:
 
     def save_cookies(self, user_id: int, cookies: str) -> None:
         with self._connect() as db:
-            db.execute("UPDATE users SET cookies_enc = ? WHERE id = ?", (self.fernet.encrypt(cookies.encode()), user_id))
+            db.execute("UPDATE users SET cookies_enc = %s WHERE id = %s", (self.fernet.encrypt(cookies.encode()), user_id))
 
     def delete(self, user_id: int) -> None:
         with self._connect() as db:
-            db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            db.execute("DELETE FROM users WHERE id = %s", (user_id,))
 

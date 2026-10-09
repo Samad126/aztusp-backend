@@ -14,7 +14,7 @@ class ConfigError(RuntimeError):
 @dataclass(frozen=True)
 class Settings:
     secret_key: str
-    database_path: str
+    database_url: str
     base_domain: str
     login_url: str
     dashboard_url: str
@@ -32,7 +32,7 @@ class Settings:
 
         settings = cls(
             secret_key=required("APP_SECRET_KEY"),
-            database_path=os.getenv("DATABASE_PATH", "userhelper.db").strip(),
+            database_url=required("DATABASE_URL"),
             base_domain=required("BASE_DOMAIN").lower().lstrip("."),
             login_url=required("LOGIN_URL"),
             dashboard_url=required("DASHBOARD_URL"),

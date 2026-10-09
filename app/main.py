@@ -15,10 +15,10 @@ from .targets import TARGETS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 settings = Settings.from_env()
-store = UserStore(settings.database_path, settings.secret_key)
+store = UserStore(settings.database_url, settings.secret_key)
 targets_by_name = {target.name: target for target in TARGETS}
 
-app = FastAPI(title="UserHelper scraper")
+app = FastAPI(title="AZTUSP")
 
 
 @app.exception_handler(LoginError)

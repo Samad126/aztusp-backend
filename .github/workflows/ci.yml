@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Re-run a deploy without pushing a commit.
+  workflow_dispatch:
+
+# Serialise deploys: two overlapping `docker compose up --build` runs against the
+# same checkout would collide. Let an in-flight deploy finish instead of cancelling it.
+concurrency:
+  group: deploy-aztusp
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q
+      - name: Docker image builds
+        run: docker build -t aztusp .
+
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        env:
+          SSHPASS: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          command -v sshpass >/dev/null || sudo apt-get install -y sshpass
+          sshpass -e ssh -p 44544 -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+
+            # Must already be a git clone of this repo, with a .env next to docker-compose.yml.
+            APP_DIR=/pool/www/CHANGE-ME/aztusp
+            API_PORT=8000
+
+            git config --global --add safe.directory "$APP_DIR"
+
+            # Deploy target, not a workstation: mirror origin/main exactly.
+            git -C "$APP_DIR" fetch origin main
+            git -C "$APP_DIR" reset --hard origin/main
+
+            # Rebuild the API only; leave the database container alone.
+            API_PORT=$API_PORT docker compose -f "$APP_DIR/docker-compose.yml" up -d --build api
+
+            # `up -d` returns once the container has started, not once it is ready,
+            # so poll /health (40 x 5s). A flag and `break`, not `exit 0`, so ssh's
+            # exit status stays honest when the script arrives on stdin.
+            healthy=0
+            for i in $(seq 1 40); do
+              if curl -fsS -o /dev/null http://127.0.0.1:$API_PORT/health 2>/dev/null; then
+                echo "api healthy after $((i * 5))s"
+                healthy=1
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$healthy" -ne 1 ]; then
+              echo "api did not become healthy within 200s" >&2
+              docker compose -f "$APP_DIR/docker-compose.yml" logs --tail 100 api >&2
+              exit 1
+            fi
+          EOF

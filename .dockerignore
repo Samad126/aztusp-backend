@@ -1,8 +1,16 @@
 .env
+.env.example
 .venv/
+venv/
 cookies.txt
 *.db
 __pycache__/
+*.pyc
 .pytest_cache/
 tests/
 .git/
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+README.md

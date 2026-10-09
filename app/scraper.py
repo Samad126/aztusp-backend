@@ -62,7 +62,7 @@ class SiteScraper:
         self._password: str | None = None
         self._on_save = on_save
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = "Mozilla/5.0 (compatible; UserHelperScraper/1.0)"
+        self.session.headers["User-Agent"] = "Mozilla/5.0 (compatible; AZTUSP/1.0)"
 
         if cookies:
             try:

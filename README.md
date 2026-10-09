@@ -1,4 +1,4 @@
-# UserHelper Backend
+# AZTUSP
 
 FastAPI service that lets each user log in with their own site account and scrape their data.
 
@@ -13,4 +13,4 @@ Open http://localhost:8000/docs, call `POST /auth/login`, then use **Authorize**
 
 Without Docker: `pip install -r requirements.txt && uvicorn app.main:app --reload`.
 
-Passwords are never stored; session cookies are kept encrypted in SQLite. Keep `APP_SECRET_KEY` stable.
+Passwords are never stored; session cookies are kept encrypted in PostgreSQL. Keep `APP_SECRET_KEY` stable.

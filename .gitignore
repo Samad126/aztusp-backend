@@ -1,8 +1,8 @@
 .env
 cookies.txt
+*.db
 __pycache__/
 *.pyc
 .venv/
 venv/
-userhelper.db
 .pytest_cache/
