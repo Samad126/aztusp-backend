@@ -5,13 +5,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: userhelper
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-userhelper}
-      POSTGRES_DB: userhelper
+      POSTGRES_USER: aztusp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aztusp}
+      POSTGRES_DB: aztusp
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U userhelper"]
+      test: ["CMD-SHELL", "pg_isready -U aztusp"]
       interval: 3s
       retries: 10
 
@@ -21,7 +21,7 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000"  # put a reverse proxy in front
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://userhelper:${POSTGRES_PASSWORD:-userhelper}@db:5432/userhelper
+      DATABASE_URL: postgresql://aztusp:${POSTGRES_PASSWORD:-aztusp}@db:5432/aztusp
     depends_on:
       db:
         condition: service_healthy
