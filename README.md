@@ -1,4 +1,4 @@
-# AZTUSP
+# AZTUSP Backend
 
 FastAPI service that lets each user log in with their own site account and scrape their data.
 

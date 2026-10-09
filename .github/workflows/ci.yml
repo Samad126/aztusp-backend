@@ -25,7 +25,7 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - run: python -m pytest -q
       - name: Docker image builds
-        run: docker build -t aztusp .
+        run: docker build -t aztusp-backend .
 
 
   deploy:

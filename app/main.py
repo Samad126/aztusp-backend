@@ -18,7 +18,7 @@ settings = Settings.from_env()
 store = UserStore(settings.database_url, settings.secret_key)
 targets_by_name = {target.name: target for target in TARGETS}
 
-app = FastAPI(title="AZTUSP")
+app = FastAPI(title="AZTUSP Backend")
 
 
 @app.exception_handler(LoginError)
