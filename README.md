@@ -1,16 +1,148 @@
 # AZTUSP Backend
 
-FastAPI service that lets each user log in with their own site account and scrape their data.
+[![CI](https://github.com/Samad126/aztusp-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/Samad126/aztusp-backend/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Run
+A FastAPI service that lets each student sign in with **their own** university
+account and read their data (profile, scores, timetable, notices, courses and
+lecture plans) as clean JSON.
+
+It logs in to the university portal on the user's behalf, scrapes the dashboard
+pages, and returns structured data with English field names.
+
+## How it works
+
+1. `POST /auth/login` with the site username and password. The service signs in
+   to the portal and returns an API token.
+2. Every other request sends that token as `Authorization: Bearer <token>`.
+3. The service loads that user's saved portal session, scrapes the requested
+   page, and returns JSON.
+
+### Privacy and security
+
+- The site **password is never stored**. It is used once to sign in.
+- Only the portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
+- API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again.
+- When the portal session expires the API answers `401` and the user logs in again.
+
+## API
+
+Interactive documentation is served at `/docs` (Swagger UI) and `/redoc`; the
+raw OpenAPI document is at `/openapi.json`.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/auth/login` | – | Sign in with a site account, returns a token |
+| `POST` | `/auth/logout` | ✔ | Delete the token and stored session |
+| `GET` | `/health` | – | Health check |
+| `GET` | `/targets` | – | Names accepted by `/scrape/{name}` |
+| `GET` | `/scrape` | ✔ | Scrape every target |
+| `GET` | `/scrape/{name}` | ✔ | Scrape one target: `student`, `scores`, `schedule`, `notices` |
+| `GET` | `/courses` | ✔ | Courses linked from the dashboard |
+| `GET` | `/courses/{lec_open_idx}/plan` | ✔ | Lecture plan of one course |
+
+Errors are returned as `{"detail": "..."}`: `401` bad/missing token or expired
+site session, `404` unknown target or course, `502` the portal is unreachable.
+
+### Example
 
 ```bash
-cp .env.example .env   # fill in the site URLs and APP_SECRET_KEY
+# 1. log in and keep the token
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "M0000000000", "password": "your-site-password"}' | jq -r .token)
+
+# 2. use it
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/scrape/scores
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/courses
+```
+
+In Swagger UI, call `POST /auth/login`, click **Authorize**, and paste the token.
+
+## Configuration
+
+Copy [.env.example](.env.example) to `.env`.
+
+| Variable | Required | Description |
+|---|---|---|
+| `APP_SECRET_KEY` | ✔ | Fernet key that encrypts stored cookies. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it stable: changing it makes stored sessions unreadable and users must log in again. |
+| `BASE_DOMAIN` | ✔ | Parent domain shared by the login and dashboard hosts |
+| `LOGIN_URL` | ✔ | Portal login page |
+| `DASHBOARD_URL` | ✔ | Dashboard home page (must be on `BASE_DOMAIN`) |
+| `DATABASE_URL` | ✔ locally | PostgreSQL URL. Overridden by Docker Compose, which points it at the `db` service |
+| `POSTGRES_PASSWORD` | Docker | Password for the Compose Postgres container (default `aztusp`). Use letters and digits only, e.g. `openssl rand -hex 24`. Set it **before** the first start: Postgres only reads it when the data volume is created |
+| `USERNAME_FIELD`, `PASSWORD_FIELD` | – | Names of the login form inputs (default `username`, `password`) |
+| `REQUEST_TIMEOUT` | – | Seconds per request to the portal (default `20`) |
+
+## Running
+
+### Docker Compose
+
+```bash
+cp .env.example .env      # fill it in
 docker compose up --build
 ```
 
-Open http://localhost:8000/docs, call `POST /auth/login`, then use **Authorize** with the returned token.
+The API is on `http://127.0.0.1:8000` (change with `API_PORT`). The stack is
+`api` + `db` (PostgreSQL 16, data in the `pgdata` volume). Locally, `docker-compose.override.yml`
+also publishes Postgres on `127.0.0.1:5432`; it is skipped when you run with `-f docker-compose.yml`.
 
-Without Docker: `pip install -r requirements.txt && uvicorn app.main:app --reload`.
+### Without Docker
 
-Passwords are never stored; session cookies are kept encrypted in PostgreSQL. Keep `APP_SECRET_KEY` stable.
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+docker compose up -d db                 # PostgreSQL
+uvicorn app.main:app --reload
+```
+
+### Tests
+
+```bash
+pip install pytest
+python -m pytest -q
+```
+
+## Project layout
+
+```
+app/
+  main.py       FastAPI app, routes and OpenAPI models
+  scraper.py    portal login, session handling, HTML table parsing
+  targets.py    what to scrape (CSS selectors) and the field-name translations
+  courses.py    course list and lecture plan scraping
+  cookies.py    shares session cookies across portal subdomains
+  db.py         PostgreSQL user store (hashed tokens, encrypted cookies)
+  config.py     environment configuration
+deploy/nginx/   nginx config for the API and frontend domains
+.github/workflows/ci.yml   tests, then deploy to the server
+```
+
+## Deployment
+
+[ci.yml](.github/workflows/ci.yml) runs the tests and a Docker build on every push and
+pull request. On a push to `main` it then deploys over SSH: it resets the server checkout
+to `origin/main`, runs `docker compose up -d --build api`, and polls `/health` until the
+container is healthy.
+
+GitHub Actions secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `SSH_HOST` | Server hostname or IP |
+| `SSH_USER` | SSH user |
+| `SSH_PASSWORD` | That user's password |
+
+On the server, the checkout needs a `.env` next to `docker-compose.yml`. The API binds to
+`127.0.0.1:3003`; put nginx in front of it using [deploy/nginx/aztu.alakbaroff.com.conf](deploy/nginx/aztu.alakbaroff.com.conf).
+The nginx config is not installed by the workflow; copy it to `/etc/nginx/conf.d/` and reload nginx by hand.
+
+## Disclaimer
+
+This project is not affiliated with or endorsed by the university. It only accesses a
+user's own data, using credentials that user provides. Use it responsibly and in line
+with the portal's terms.
+
+## License
+
+[MIT](LICENSE)
