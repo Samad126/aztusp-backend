@@ -103,7 +103,7 @@ uvicorn app.main:app --reload
 ### Tests
 
 ```bash
-pip install pytest
+pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
