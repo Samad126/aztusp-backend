@@ -135,6 +135,16 @@ class SiteScraper:
             self._save_cookies()
             return BeautifulSoup(response.text, "html.parser")
 
+    def open_download(self, url: str) -> requests.Response:
+        """Open a file download as a stream (caller must close it). Raises LoginError if the session is gone."""
+        with self._lock:
+            response = self._request("GET", url, stream=True)
+            if self._looks_logged_out(response):
+                response.close()
+                raise LoginError("Site session expired, please log in again")
+            self._save_cookies()
+            return response
+
     def _login(self) -> None:
         settings = self.settings
         if self._password is None:

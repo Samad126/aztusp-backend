@@ -167,6 +167,7 @@ class SchedulePage(PageEnvelope):
 
 
 class NoticeRow(BaseModel):
+    id: Cell = Field("", description="Notice id; use it with `/me/notices/{notice_id}`. Empty if the row has no detail view.")
     number: Cell = ""
     section: Cell = ""
     subject: Cell = ""
@@ -260,3 +261,21 @@ class LecturePlan(BaseModel):
     semester: str | None
     info: dict[str, str] | None = Field(description="Professor, department, credits, hours and weeks.")
     blocks: list[PlanBlock] = Field(description="Sections of the plan, in page order.")
+
+
+class NoticeAttachment(BaseModel):
+    name: str
+    url: str = Field(description="Link on the university site. It needs the site session, so use `download` instead.")
+    file_no: str = Field("", description="File number within the notice (`wr_fno`).")
+    download: str = Field("", description="API path that downloads the file, e.g. `/api/v1/me/notices/34/files/1`. Send the same `Authorization` header.")
+
+
+class NoticeDetail(BaseModel):
+    id: str
+    url: str = Field(description="Page that was scraped.")
+    subject: str
+    author: str = ""
+    created_at: str = Field("", description="e.g. `2020-12-13 22:15:12`.")
+    views: str = Field("", description="`Müraciətlərin sayı`.")
+    attachments: list[NoticeAttachment] = Field([], description="Files attached to the notice (`Qoşma fayl`).")
+    body: str = Field("", description="Message text, with line breaks kept.")

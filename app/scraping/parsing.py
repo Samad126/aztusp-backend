@@ -1,5 +1,7 @@
 """Turn dashboard HTML into plain Python structures."""
 
+import re
+
 from bs4 import BeautifulSoup, Tag
 
 from .targets import FIELD_MAP
@@ -7,6 +9,9 @@ from .targets import FIELD_MAP
 
 def is_total(row: dict[str, str], label: str) -> bool:
     return next(iter(row.values()), None) == label
+
+
+SEND_VIEW = re.compile(r"send_view\(\s*['\"]?([^'\")\s]+)")
 
 
 def parse_table(table: Tag) -> list[dict[str, str]]:
@@ -35,7 +40,12 @@ def parse_table(table: Tag) -> list[dict[str, str]]:
         if not cells:
             continue
         keys = column_keys(headers, len(cells))
-        records.append(dict(zip(keys, cells)))
+        record = dict(zip(keys, cells))
+        # A row that opens a detail view with send_view(<id>) gets that id.
+        opener = row.find(onclick=SEND_VIEW) or (row if SEND_VIEW.search(row.get("onclick", "")) else None)
+        if opener is not None and (match := SEND_VIEW.search(opener.get("onclick", ""))):
+            record["id"] = match.group(1)
+        records.append(record)
     return records
 
 
