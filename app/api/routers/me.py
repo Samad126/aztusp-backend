@@ -12,7 +12,7 @@ router = APIRouter(prefix="/me", tags=["My data"])
 PAGES = {
     "profile": ("student", "Student profile", ProfilePage),
     "scores": ("scores", "Scores and semester results", ScoresPage),
-    "schedule": ("schedule", "Lecture timetable", SchedulePage),
+    "schedule": ("schedule", "Lecture timetable (one block per semester)", SchedulePage),
     "notices": ("notices", "Notices", NoticesPage),
 }
 

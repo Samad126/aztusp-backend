@@ -12,7 +12,7 @@ from requests.cookies import RequestsCookieJar, create_cookie
 from ..config import Settings
 from .cookies import share_cookies_across_subdomains
 from .parsing import find_login_form, is_total, map_keys, parse_pairs, parse_table
-from .targets import Target
+from .targets import Section, Target
 
 log = logging.getLogger(__name__)
 
@@ -95,16 +95,7 @@ class SiteScraper:
             rows = result["tables"].get(key, [])
             result["totals"][key] = next((row for row in rows if is_total(row, label)), None)
             result["tables"][key] = [row for row in rows if not is_total(row, label)]
-        result["sections"] = {
-            key: [
-                {
-                    "title": title.get_text(" ", strip=True) if (title := card.select_one(section.title)) else None,
-                    "rows": parse_table(table) if (table := card.select_one(section.table)) else [],
-                }
-                for card in soup.select(section.container)
-            ]
-            for key, section in target.sections.items()
-        }
+        result["sections"] = {key: self._read_section(soup, section) for key, section in target.sections.items()}
         for key, selector in target.pairs.items():
             table = soup.select_one(selector)
             result["pairs"][key] = parse_pairs(table) if table else {}
@@ -112,6 +103,28 @@ class SiteScraper:
             element = soup.select_one(selector)
             result["fields"][key] = element.get_text(" ", strip=True) if element else None
         return map_keys(result)
+
+    @staticmethod
+    def _read_section(soup: BeautifulSoup, section: Section) -> list[dict]:
+        if section.following:
+            # Titles and tables are siblings: every table belongs to the closest title before it.
+            titles = {id(tag) for tag in soup.select(section.container)}
+            blocks: list[dict] = []
+            for tag in soup.select(f"{section.container}, {section.table}"):
+                if id(tag) in titles:
+                    blocks.append({"title": tag.get_text(" ", strip=True), "rows": []})
+                else:
+                    if not blocks:
+                        blocks.append({"title": None, "rows": []})
+                    blocks[-1]["rows"] += parse_table(tag)
+            return blocks
+        return [
+            {
+                "title": title.get_text(" ", strip=True) if (title := card.select_one(section.title)) else None,
+                "rows": parse_table(table) if (table := card.select_one(section.table)) else [],
+            }
+            for card in soup.select(section.container)
+        ]
 
     def fetch(self, url: str, headers: dict[str, str] | None = None) -> BeautifulSoup:
         """Fetch a page, logging in again if the saved session is missing or expired."""

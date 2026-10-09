@@ -25,6 +25,9 @@ def parse_table(table: Tag) -> list[dict[str, str]]:
         if header_row
         else []
     )
+    if not headers:
+        # Header cells placed straight in the table (or <tbody>) with no <tr> around them.
+        headers = [c.get_text(" ", strip=True) for c in table.find_all(["th", "td"]) if c.find_parent("tr") is None]
 
     records = []
     for row in rows:

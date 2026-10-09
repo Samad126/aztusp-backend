@@ -147,18 +147,22 @@ class ScoresPage(PageEnvelope):
     fields: dict[str, str | None] = Field(description="Always empty.")
 
 
-class ScheduleTables(BaseModel):
-    timetable: list[dict[str, str]] = Field(
+class ScheduleSections(BaseModel):
+    semesters: list[Section] = Field(
         [],
-        description="Timetable rows: `Dərs` (lesson slot) plus one column per weekday. Empty when no lessons are scheduled."
+        description=(
+            "One block per semester shown on the page, in page order. `title` is the heading "
+            "(e.g. `2026İl payiz Semestr Dərs cədvəli`); `rows` are timetable rows keyed by the column titles "
+            "(`Dərs`, then one column per weekday). `rows` is empty when no lessons are scheduled."
+        ),
     )
 
 
 class SchedulePage(PageEnvelope):
-    tables: ScheduleTables = Field(default_factory=ScheduleTables)
+    tables: dict[str, list[dict[str, str]]] = Field(description="Always empty.")
     pairs: dict[str, dict[str, str]] = Field(description="Always empty.")
     totals: dict[str, dict[str, str] | None] = Field(description="Always empty.")
-    sections: dict[str, list[Section]] = Field(description="Always empty.")
+    sections: ScheduleSections = Field(default_factory=ScheduleSections)
     fields: dict[str, str | None] = Field(description="Always empty.")
 
 

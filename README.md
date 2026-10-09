@@ -36,7 +36,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/health` | – | Health check (unversioned) |
 | `GET` | `/api/v1/me/profile` | ✔ | Student profile |
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
-| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable |
+| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `GET` | `/api/v1/courses` | ✔ | Courses linked from the dashboard |
 | `GET` | `/api/v1/courses/{lec_open_idx}/plan` | ✔ | Lecture plan of one course |
