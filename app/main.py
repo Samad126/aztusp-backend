@@ -1,7 +1,9 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .api.deps import get_store
 from .api.errors import register_error_handlers
@@ -54,6 +56,20 @@ app = FastAPI(
     openapi_tags=TAGS,
 )
 register_error_handlers(app)
+
+# The web frontend lives on another origin. Auth is a bearer header, not cookies, so no credentials are needed.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "https://aztu.alakbaroff.com,http://localhost:5173").split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["Content-Disposition"],
+)
 
 # Health stays unversioned: Docker, CI and the reverse proxy probe it.
 app.include_router(system.router)
