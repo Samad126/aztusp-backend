@@ -1,0 +1,6 @@
+# Loaded automatically by `docker compose` on a dev machine. The deploy uses
+# `-f docker-compose.yml`, so this file is skipped on the server.
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"

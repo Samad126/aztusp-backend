@@ -42,8 +42,8 @@ jobs:
             set -e
 
             # Must already be a git clone of this repo, with a .env next to docker-compose.yml.
-            APP_DIR=/pool/www/CHANGE-ME/aztusp-backend
-            API_PORT=8000
+            APP_DIR=/pool/www/aztu.alakbaroff.com/backend
+            API_PORT=3012
 
             git config --global --add safe.directory "$APP_DIR"
 

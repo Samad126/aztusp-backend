@@ -1,3 +1,6 @@
+# Fixed project name so volumes/containers can't collide with other stacks on the server
+name: aztusp-backend
+
 services:
   db:
     image: postgres:16-alpine
@@ -5,8 +8,6 @@ services:
       POSTGRES_USER: userhelper
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-userhelper}
       POSTGRES_DB: userhelper
-    ports:
-      - "127.0.0.1:5432:5432"  # local access only, never public
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
