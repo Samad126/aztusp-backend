@@ -25,12 +25,13 @@ site password. Students can also get a Telegram or email message when a watched 
 3. Call any endpoint under *My data* and *Courses*. Data is read from the university site on every request, so calls can take a few seconds.
 4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with the fields to watch. Your login password is saved and used for the checks, and an email is optional once Telegram is connected. See *Notifications*.
 5. To change the site password: `POST /me/password` with `password` and `confirm_password`. `changed` is `true` when the site answers with its sign-in page instead of the change form; otherwise `messages` says why. After a change, the saved password is updated too, so notifications keep working.
+6. To sign out: `POST /auth/logout`. It also signs out of the university site, then deletes everything stored for you.
 
 ## Privacy
 
 * Your site password is kept **encrypted** from the login onward, so change notifications can sign in every 30 minutes and check your scores. A password change replaces it. Logging out deletes it; turning notifications off keeps it.
 * Your email, watched fields, last results and Telegram chat are kept only while notifications are on. Turning them off deletes the email and results (the Telegram link stays until you disconnect it). Logging out deletes everything.
-* Only the resulting site session cookies are kept, **encrypted** in the database.
+* Only the resulting site session cookies are kept, **encrypted** in the database. Logging out also signs out of the university dashboard and SSO.
 * Your API token is stored as a SHA-256 hash, so it cannot be recovered. It expires after 1 day. Logging in again issues a new token and invalidates the old one.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
 """
@@ -59,7 +60,7 @@ app = FastAPI(
     title="AZTUSP Backend",
     summary="Per-user scraping API for the university student portal.",
     description=DESCRIPTION,
-    version="2.1.0",
+    version="2.2.0",
     license_info={"name": "MIT", "identifier": "MIT"},
     openapi_tags=TAGS,
 )
