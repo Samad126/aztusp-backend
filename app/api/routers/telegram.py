@@ -16,6 +16,7 @@ router = APIRouter(prefix="/me/telegram", tags=["Notifications"])
     responses=UNAUTHORIZED,
 )
 def read_telegram(user: User = Depends(current_user), store: UserStore = Depends(get_store)):
+    """Whether a Telegram chat is connected to your account. Connect one with `POST /me/telegram/link`."""
     return {"linked": store.get_telegram_chat(user.id) is not None}
 
 

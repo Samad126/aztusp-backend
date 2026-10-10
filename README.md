@@ -16,10 +16,11 @@ pages, and returns structured data with English field names.
    to the portal and returns an API token.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
+4. Students can also turn on change notifications, so they get a message when a watched result changes. See [Grade watcher](#grade-watcher).
 
 ### Privacy and security
 
-- The site **password is not stored**, with one exception: students who turn on change notifications. Their password is kept **encrypted** so the watcher can check their scores every 30 minutes. Turning notifications off or logging out deletes it.
+- The site **password is not stored**, except for students who turn on change notifications. Then it is kept **encrypted**, with their email, watched fields, last results and Telegram chat, so the watcher can check their scores every 30 minutes. Turning notifications off deletes the password, email and results. Logging out deletes everything.
 - Only the portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
 - API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again.
 - When the portal session expires the API answers `401` and the user logs in again.
@@ -59,8 +60,16 @@ Every data endpoint scrapes the university site live, so a call takes as long as
 
 `/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
-Errors are returned as `{"detail": "..."}`: `401` bad/missing token or expired
-site session, `404` unknown target or course, `502` the portal is unreachable.
+Errors are returned as `{"detail": "..."}`:
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or invalid token, expired site session, or the site rejected a password (`PUT /me/notifications`) |
+| `404` | Unknown target, course or notice, or notifications are off (`GET /me/notifications`) |
+| `409` | Disconnecting Telegram while notifications are on without an email |
+| `422` | Invalid notification settings, or no email and no Telegram connected |
+| `502` | The university site could not be reached or failed |
+| `503` | Telegram is not set up on the server (`TELEGRAM_BOT_USERNAME` is missing) |
 
 ### Example
 
@@ -73,6 +82,14 @@ TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
 # 2. use it
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/me/scores
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/courses
+
+# 3. connect Telegram: open the returned url in Telegram and press Start
+curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/me/telegram/link
+
+# 4. turn change notifications on (email is optional once Telegram is connected)
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  http://localhost:8000/api/v1/me/notifications \
+  -d '{"password": "your-site-password", "email": "student@example.com", "fields": ["final_score", "grade"]}'
 ```
 
 In Swagger UI, call `POST /api/v1/auth/login`, click **Authorize**, and paste the token.
@@ -91,6 +108,7 @@ Copy [.env.example](.env.example) to `.env`.
 | `POSTGRES_PASSWORD` | Docker | Password for the Compose Postgres container (default `aztusp`). Use letters and digits only, e.g. `openssl rand -hex 24`. Set it **before** the first start: Postgres only reads it when the data volume is created |
 | `USERNAME_FIELD`, `PASSWORD_FIELD` | – | Names of the login form inputs (default `username`, `password`) |
 | `REQUEST_TIMEOUT` | – | Seconds per request to the portal (default `20`) |
+| `TELEGRAM_BOT_USERNAME` | For Telegram | The bot's username without `@`. The API uses it to build the connect link. The other watcher settings are in [Grade watcher](#grade-watcher) |
 
 ## Running
 
@@ -121,6 +139,9 @@ pip install -r requirements-dev.txt
 python -m pytest -q
 ```
 
+Database tests (the API and notification storage) run only when `TEST_DATABASE_URL` points at a PostgreSQL
+database. Without it they are skipped. CI sets it.
+
 ## Project layout
 
 ```
@@ -132,14 +153,20 @@ app/
   api/
     deps.py          settings, user store and per-request authenticated scraper
     errors.py        exception -> HTTP status handlers, shared error responses
-    routers/         auth, me (profile/scores/...), courses, system (health)
+    routers/         auth, me (profile/scores/...), notifications, telegram, courses, system (health)
   scraping/
     client.py        portal login, session handling, redirects
     parsing.py       HTML table/pair parsing and field-name translation
     targets.py       what to scrape (CSS selectors) and the field-name translations
     courses.py       course list and lecture plan scraping
     cookies.py       shares session cookies across portal subdomains
-  watcher/           grade watcher (python -m app.watcher): checks, saved snapshot, mail and Telegram
+  watcher/           grade watcher (python -m app.watcher)
+    __main__.py      the loop, --once and the test flags
+    checker.py       one check per student: sign in, read scores, compare, notify
+    notify.py        email (SMTP) and Telegram messages
+    telegram.py      connects chats from /start <code> messages
+    results.py       picks the watched fields and finds changes
+    config.py        shared watcher settings
 tests/               pytest suite
 deploy/nginx/   nginx config for the API domain
 .github/workflows/ci.yml   tests, then deploy to the server

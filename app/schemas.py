@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .watcher.config import DEFAULT_FIELDS, WATCHABLE_FIELDS
 
@@ -57,12 +57,28 @@ class NotificationSettings(BaseModel):
 
 
 class NotificationsIn(NotificationSettings):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"password": "your-site-password", "email": "student@example.com", "fields": ["final_score", "grade"]}}
+    )
+
     password: str = Field(
         description="Site password. Stored encrypted so the watcher can sign in every check. Sent again whenever you save these settings; the site must accept it."
     )
 
 
 class NotificationsOut(NotificationSettings):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "student@example.com",
+                "fields": ["final_score", "grade"],
+                "telegram_linked": True,
+                "status": "ok",
+                "last_checked_at": "2026-10-10T11:30:00Z",
+            }
+        }
+    )
+
     telegram_linked: bool = Field(description="Whether a Telegram chat is connected (see `/me/telegram/link`).")
     status: Literal["ok", "wrong_password", "error"] = Field(
         description="`ok`: the last check worked. `wrong_password`: the site rejected the saved password, so checks are paused "
@@ -72,11 +88,17 @@ class NotificationsOut(NotificationSettings):
 
 
 class TelegramLink(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"url": "https://t.me/AztuGradeBot?start=Qk3v9xR2mLp8WbT1sYc4Zg", "expires_at": "2026-10-10T11:45:00Z"}}
+    )
+
     url: str = Field(description="Open this on a phone or desktop. Pressing Start in Telegram connects the chat to your account.")
     expires_at: datetime = Field(description="The link works once and stops working at this time.")
 
 
 class TelegramStatus(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {"linked": True}})
+
     linked: bool = Field(description="Whether a Telegram chat is connected to your account.")
 
 

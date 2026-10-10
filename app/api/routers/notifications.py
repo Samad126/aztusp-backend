@@ -30,7 +30,12 @@ def read_notifications(user: User = Depends(current_user), store: UserStore = De
     "",
     summary="Turn change notifications on or update them",
     response_model=NotificationsOut,
-    responses={**UNAUTHORIZED, **SITE_DOWN, 422: {"model": Detail, "description": "No email and no Telegram connected."}},
+    responses={
+        **UNAUTHORIZED,
+        401: {"model": Detail, "description": "Missing or invalid token, or the site rejected the password."},
+        **SITE_DOWN,
+        422: {"model": Detail, "description": "No email and no Telegram connected, or invalid settings."},
+    },
 )
 def save_notifications(
     body: NotificationsIn,

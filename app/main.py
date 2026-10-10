@@ -15,17 +15,19 @@ API_PREFIX = "/api/v1"
 
 DESCRIPTION = """
 Lets each student sign in with **their own** university account and read their data
-(profile, scores, timetable, notices, courses and lecture plans) as JSON.
+(profile, scores, timetable, notices, courses and lecture plans) as JSON. Students can also
+get a Telegram or email message when a watched result changes.
 
 ## How to use
 
 1. `POST /auth/login` with your site username and password. The response contains an API **token**.
 2. Click **Authorize** (top right) and paste the token, or send `Authorization: Bearer <token>`.
 3. Call any endpoint under *My data* and *Courses*. Data is read from the university site on every request, so calls can take a few seconds.
+4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with your site password and the fields to watch. An email is optional once Telegram is connected. See *Notifications*.
 
 ## Privacy
 
-* Your site password is used to sign in and is **not stored**, with one exception: if you turn on change notifications, it is kept **encrypted** so the watcher can sign in every 30 minutes and check your scores. Turning notifications off, or logging out, deletes it.
+* Your site password is used to sign in and is **not stored**, with one exception: if you turn on change notifications, it is kept **encrypted**, with your email, watched fields, last results and Telegram chat, so the watcher can sign in every 30 minutes and check your scores. Turning notifications off deletes the password, email and results (the Telegram link stays until you disconnect it). Logging out deletes everything.
 * Only the resulting site session cookies are kept, **encrypted** in the database.
 * Your API token is stored as a SHA-256 hash, so it cannot be recovered. Logging in again issues a new token and invalidates the old one.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
@@ -35,7 +37,10 @@ TAGS = [
     {"name": "Auth", "description": "Sign in with a site account and manage the API token."},
     {"name": "My data", "description": "Your dashboard pages as JSON, scraped live on each request."},
     {"name": "Courses", "description": "Courses linked from the dashboard and their lecture plans."},
-    {"name": "Notifications", "description": "Email and Telegram messages when a watched result changes."},
+    {
+        "name": "Notifications",
+        "description": "Get a message by email, on Telegram, or both when a watched result changes. Connect Telegram with a link, then turn notifications on with your site password.",
+    },
     {"name": "System", "description": "Service status and metadata."},
 ]
 
