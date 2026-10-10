@@ -32,7 +32,7 @@ SCHEMA = (
     # Databases created before the password was stored at login get the column here.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc BYTEA",
     # Students who turned change notifications on. The watcher signs in with the password saved on the user.
-    # Everything here is deleted with the user (logout) or by turning notifications off.
+    # Everything here is deleted by turning notifications off. Logging out keeps it, so checks keep running.
     """
     CREATE TABLE IF NOT EXISTS notification_settings (
         user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -81,6 +81,15 @@ SCHEMA = (
         expires_at TIMESTAMPTZ NOT NULL
     )
     """,
+    # The profile photo a student uploaded to this service (not to the university site). One per user; it is kept across logouts.
+    """
+    CREATE TABLE IF NOT EXISTS profile_photos (
+        user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        content_type TEXT NOT NULL,
+        data BYTEA NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
 )
 
 
@@ -115,7 +124,7 @@ def _hash(token: str) -> str:
 
 class UserStore:
     """Users, their API tokens (stored hashed, with an expiry), their site session cookies and site password (both stored encrypted),
-    the change notifications of students who turned them on, and their Telegram chats."""
+    the change notifications of students who turned them on, their Telegram chats, and their profile photos."""
 
     def __init__(self, database_url: str, secret_key: str):
         self.database_url = database_url
@@ -191,10 +200,15 @@ class UserStore:
         with self._connect() as db:
             db.execute("UPDATE users SET cookies_enc = %s WHERE id = %s", (self.fernet.encrypt(cookies.encode()), user_id))
 
-    def delete(self, user_id: int) -> None:
-        """Delete the user with everything stored for them: notifications, saved password, Telegram chat."""
+    def end_session(self, user_id: int) -> None:
+        """Log out: the API token and the site session cookies stop working. Everything else stays, so change notifications,
+        the saved password, the Telegram link and the profile photo keep working."""
+        # The token is replaced by a random one nobody has, so the old token can no longer match.
         with self._connect() as db:
-            db.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            db.execute(
+                "UPDATE users SET token_hash = %s, token_expires_at = NULL, cookies_enc = NULL WHERE id = %s",
+                (_hash(secrets.token_urlsafe(32)), user_id),
+            )
 
     def save_password(self, user_id: int, password: str) -> None:
         """Replace the saved password after a site password change. Clears a wrong-password status, so the watcher signs
@@ -323,3 +337,22 @@ class UserStore:
     def delete_telegram_chat(self, user_id: int) -> None:
         with self._connect() as db:
             db.execute("DELETE FROM telegram_chats WHERE user_id = %s", (user_id,))
+
+    def save_photo(self, user_id: int, content_type: str, data: bytes) -> None:
+        """Set the profile photo, replacing any earlier one."""
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO profile_photos (user_id, content_type, data) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET content_type = excluded.content_type, data = excluded.data, updated_at = now()",
+                (user_id, content_type, data),
+            )
+
+    def get_photo(self, user_id: int) -> tuple[str, bytes] | None:
+        """The profile photo as (content type, bytes), or None if there is none."""
+        with self._connect() as db:
+            row = db.execute("SELECT content_type, data FROM profile_photos WHERE user_id = %s", (user_id,)).fetchone()
+        return (row[0], bytes(row[1])) if row else None
+
+    def delete_photo(self, user_id: int) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM profile_photos WHERE user_id = %s", (user_id,))

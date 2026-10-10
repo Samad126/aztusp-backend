@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, Path, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi.responses import Response, StreamingResponse
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
-from ...db import UserStore
+from ...db import User, UserStore
+from ...photos import MAX_PHOTO_BYTES, sniff_image_type
 from ...schemas import (
     Detail,
     NoticeDetail,
     NoticesPage,
+    OkResponse,
     PasswordChangeIn,
     PasswordChangeResult,
     ProfilePage,
@@ -16,10 +19,12 @@ from ...schemas import (
 from ...scraping import notices, password_form
 from ...scraping.client import SiteScraper
 from ...scraping.targets import TARGETS_BY_NAME
-from ..deps import current_scraper, get_store
+from ..deps import current_scraper, current_user, get_store
 from ..errors import SITE_DOWN, UNAUTHORIZED
 
 router = APIRouter(prefix="/me", tags=["My data"])
+
+PHOTO_TYPES = ("image/jpeg", "image/png", "image/webp")
 
 # URL name -> (scrape target name, summary, response model)
 PAGES = {
@@ -132,3 +137,85 @@ def change_password(
     if result["changed"]:
         store.save_password(scraper.user.id, body.password)
     return result
+
+
+@router.put(
+    "/photo",
+    summary="Upload or replace my profile photo",
+    response_model=OkResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "description": f"The image file itself, not a form. JPEG, PNG or WebP, {MAX_PHOTO_BYTES // (1024 * 1024)} MB at most.",
+            "content": {content_type: {"schema": {"type": "string", "format": "binary"}} for content_type in PHOTO_TYPES},
+        }
+    },
+    responses={
+        **UNAUTHORIZED,
+        413: {"model": Detail, "description": "The photo is larger than the limit."},
+        415: {"model": Detail, "description": "The file is not a JPEG, PNG or WebP image."},
+    },
+)
+async def upload_photo(
+    request: Request,
+    user: User = Depends(current_user),
+    store: UserStore = Depends(get_store),
+):
+    """Send the image as the raw request body. The format is read from the file itself, so the `Content-Type` header
+    does not have to be right. Uploading again replaces the photo.
+
+    The photo is stored on this service, not on the university site. It is kept until it is replaced or deleted, and
+    logging out keeps it.
+    """
+    # Counted while the body arrives, so an oversized upload is refused without being read to the end.
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > MAX_PHOTO_BYTES:
+            raise HTTPException(status_code=413, detail=f"The photo must be {MAX_PHOTO_BYTES // (1024 * 1024)} MB or smaller")
+    photo = bytes(data)
+
+    content_type = sniff_image_type(photo)
+    if content_type is None:
+        raise HTTPException(status_code=415, detail="Upload a JPEG, PNG or WebP image")
+    await run_in_threadpool(store.save_photo, user.id, content_type, photo)
+    return {"ok": True}
+
+
+@router.get(
+    "/photo",
+    summary="My profile photo",
+    response_class=Response,
+    responses={
+        200: {
+            "description": "The photo, as uploaded.",
+            "content": {content_type: {"schema": {"type": "string", "format": "binary"}} for content_type in PHOTO_TYPES},
+        },
+        **UNAUTHORIZED,
+        404: {"model": Detail, "description": "No profile photo has been uploaded."},
+    },
+)
+def read_photo(user: User = Depends(current_user), store: UserStore = Depends(get_store)):
+    """The photo itself. Send the `Authorization` header, as with the other endpoints, then use the response as an image
+    (in the browser, for example, make a blob URL from it)."""
+    photo = store.get_photo(user.id)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="No profile photo has been uploaded")
+    content_type, data = photo
+    return Response(
+        data,
+        media_type=content_type,
+        headers={"Cache-Control": "private, no-cache", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.delete(
+    "/photo",
+    summary="Delete my profile photo",
+    response_model=OkResponse,
+    responses=UNAUTHORIZED,
+)
+def delete_photo(user: User = Depends(current_user), store: UserStore = Depends(get_store)):
+    """Remove the profile photo. Does nothing if there is none."""
+    store.delete_photo(user.id)
+    return {"ok": True}

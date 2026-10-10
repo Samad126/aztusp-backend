@@ -43,18 +43,19 @@ def login(
 
 @router.post(
     "/logout",
-    summary="Log out of the university site and delete stored data",
+    summary="Log out of the university site and end the API session",
     response_model=OkResponse,
     responses=UNAUTHORIZED,
 )
 def logout(scraper: SiteScraper = Depends(current_scraper), store: UserStore = Depends(get_store)):
-    """Log out of the university dashboard and SSO too, then delete the caller's token, session cookies and password.
+    """Log out of the university dashboard and SSO too, then end the API session: the token and the session cookies stop working.
 
-    The stored data is deleted even when the university site cannot be reached. A new login is needed afterwards.
+    The saved password, notification settings, Telegram link and profile photo are kept, so change notifications keep running.
+    The session ends even when the university site cannot be reached. A new login is needed afterwards.
     """
     try:
         scraper.log_out()
     except requests.RequestException as exc:
         log.warning("Could not log %s out of the university site: %s", scraper.user.site_username, exc)
-    store.delete(scraper.user.id)
+    store.end_session(scraper.user.id)
     return {"ok": True}

@@ -12,6 +12,7 @@ from app.api import deps
 from app.config import Settings
 from app.db import UserStore
 from app.main import app
+from app.photos import MAX_PHOTO_BYTES
 from app.scraping import courses, password_form
 from app.scraping.client import LoginError, SiteScraper
 
@@ -148,7 +149,7 @@ def test_logout_also_logs_out_of_the_university_site(client, monkeypatch):
     assert logged_out == ["u1"]
 
 
-def test_logout_deletes_the_token_when_the_university_site_is_down(client, monkeypatch):
+def test_logout_ends_the_session_when_the_university_site_is_down(client, monkeypatch):
     headers = login(client)
 
     def site_down(self):
@@ -270,13 +271,25 @@ def test_notification_routes_require_a_token(client):
     assert client.post("/api/v1/me/telegram/link").status_code == 401
 
 
-def test_logout_deletes_the_saved_password(client, store):
+def test_logout_keeps_change_notifications_running(client, store):
     headers = login(client)
     client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
 
     client.post("/api/v1/auth/logout", headers=headers)
 
-    assert store.subscribers() == []
+    assert [subscription.password for subscription in store.subscribers()] == ["good"]
+    new_headers = login(client)
+    assert client.get("/api/v1/me/notifications", headers=new_headers).json()["email"] == "student@example.com"
+
+
+def test_logout_drops_the_site_session_cookies(client, store):
+    headers = login(client)
+
+    client.post("/api/v1/auth/logout", headers=headers)
+
+    with store._connect() as db:
+        (cookies,) = db.execute("SELECT cookies_enc FROM users").fetchone()
+    assert cookies is None
 
 
 PASSWORD_CHANGE = {"password": "better-pass", "confirm_password": "better-pass"}
@@ -397,3 +410,100 @@ def test_a_token_without_an_expiry_needs_a_login(client, store):
         db.execute("UPDATE users SET token_expires_at = NULL")
 
     assert client.get("/api/v1/me/notifications", headers=headers).status_code == 401
+
+
+PHOTO = b"\xff\xd8\xff\xe0" + b"photo-bytes"
+PNG_PHOTO = b"\x89PNG\r\n\x1a\n" + b"other-bytes"
+
+
+def upload(client, headers, data: bytes, content_type: str = "image/jpeg"):
+    return client.put("/api/v1/me/photo", content=data, headers={**headers, "Content-Type": content_type})
+
+
+def test_no_photo_until_one_is_uploaded(client):
+    assert client.get("/api/v1/me/photo", headers=login(client)).status_code == 404
+
+
+def test_uploaded_photo_comes_back_as_an_image(client):
+    headers = login(client)
+
+    assert upload(client, headers, PHOTO).json() == {"ok": True}
+
+    response = client.get("/api/v1/me/photo", headers=headers)
+    assert response.status_code == 200
+    assert response.content == PHOTO
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_the_format_comes_from_the_file_not_the_header(client):
+    headers = login(client)
+
+    upload(client, headers, PNG_PHOTO, content_type="image/jpeg")
+
+    assert client.get("/api/v1/me/photo", headers=headers).headers["content-type"] == "image/png"
+
+
+def test_a_new_upload_replaces_the_photo(client):
+    headers = login(client)
+    upload(client, headers, PHOTO)
+
+    upload(client, headers, PNG_PHOTO, content_type="image/png")
+
+    assert client.get("/api/v1/me/photo", headers=headers).content == PNG_PHOTO
+
+
+def test_deleting_the_photo(client):
+    headers = login(client)
+    upload(client, headers, PHOTO)
+
+    assert client.delete("/api/v1/me/photo", headers=headers).json() == {"ok": True}
+    assert client.get("/api/v1/me/photo", headers=headers).status_code == 404
+    assert client.delete("/api/v1/me/photo", headers=headers).status_code == 200  # nothing left, still fine
+
+
+def test_a_file_that_is_not_an_image_is_refused_and_the_old_photo_stays(client):
+    headers = login(client)
+    upload(client, headers, PHOTO)
+
+    response = upload(client, headers, b"<html>not a photo</html>", content_type="image/png")
+
+    assert response.status_code == 415
+    assert client.get("/api/v1/me/photo", headers=headers).content == PHOTO
+
+
+def test_a_photo_over_the_limit_is_refused(client):
+    headers = login(client)
+    too_big = b"\xff\xd8\xff" + b"0" * (MAX_PHOTO_BYTES - 2)
+
+    assert upload(client, headers, too_big).status_code == 413
+    assert client.get("/api/v1/me/photo", headers=headers).status_code == 404
+
+
+def test_a_photo_at_the_limit_is_kept(client):
+    headers = login(client)
+    at_limit = b"\xff\xd8\xff" + b"0" * (MAX_PHOTO_BYTES - 3)
+
+    assert upload(client, headers, at_limit).status_code == 200
+    assert len(client.get("/api/v1/me/photo", headers=headers).content) == MAX_PHOTO_BYTES
+
+
+def test_logout_keeps_the_photo(client):
+    headers = login(client)
+    upload(client, headers, PHOTO)
+
+    client.post("/api/v1/auth/logout", headers=headers)
+
+    assert client.get("/api/v1/me/photo", headers=login(client)).content == PHOTO
+
+
+def test_photo_routes_require_a_token(client):
+    assert client.put("/api/v1/me/photo", content=PHOTO).status_code == 401
+    assert client.get("/api/v1/me/photo").status_code == 401
+    assert client.delete("/api/v1/me/photo").status_code == 401
+
+
+def test_photo_upload_documents_the_image_body(client):
+    operation = client.get("/openapi.json").json()["paths"]["/api/v1/me/photo"]["put"]
+
+    assert set(operation["requestBody"]["content"]) == {"image/jpeg", "image/png", "image/webp"}

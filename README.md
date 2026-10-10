@@ -17,13 +17,14 @@ pages, and returns structured data with English field names.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
 4. Students can also turn on change notifications, so they get a message when a watched result changes. See [Grade watcher](#grade-watcher).
-5. `POST /api/v1/auth/logout` signs out of the university site too, then deletes the stored data.
+5. `POST /api/v1/auth/logout` signs out of the university site too and ends the API session. Saved data is kept, so change notifications keep running.
 
 ### Privacy and security
 
-- The site **password is stored**, **encrypted** (Fernet), from the login onward. Change notifications sign in with it, so students don't type it again. A successful `POST /api/v1/me/password` replaces it. Logging out deletes it. Turning notifications off keeps it.
+- The site **password is stored**, **encrypted** (Fernet), from the login onward. Change notifications sign in with it, so students don't type it again. A successful `POST /api/v1/me/password` replaces it, and so does logging in again. Logging out and turning notifications off keep it.
 - The portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
-- Logging out also signs out of the university dashboard and SSO. If the university site can't be reached, the stored data is still deleted.
+- The **profile photo** is stored in this service's database, not on the university site. It is kept until the student replaces or deletes it. Logging out keeps it.
+- Logging out also signs out of the university dashboard and SSO, and drops the session cookies. If the university site can't be reached, the API session still ends.
 - API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again. Tokens expire after 1 day, so the user logs in again then.
 - When the portal session expires the API answers `401` and the user logs in again.
 
@@ -35,13 +36,16 @@ raw OpenAPI document is at `/openapi.json`.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/api/v1/auth/login` | – | Sign in with a site account, returns a token |
-| `POST` | `/api/v1/auth/logout` | ✔ | Log out of the university dashboard and SSO, then delete the token and stored session |
+| `POST` | `/api/v1/auth/logout` | ✔ | Log out of the university dashboard and SSO, then end the API session (token and site session cookies) |
 | `GET` | `/health` | – | Health check (unversioned) |
 | `GET` | `/api/v1/me/profile` | ✔ | Student profile |
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
 | `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
+| `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 2 MB at most) |
+| `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
+| `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
 | `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields, status of the last check |
 | `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them, with the password saved at login |
 | `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved results |
@@ -63,7 +67,9 @@ Every data endpoint scrapes the university site live, so a call takes as long as
 
 `POST /api/v1/me/password` submits the change form on the university site with the new password, typed twice as `password` and `confirm_password`. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
 
-`POST /api/v1/auth/logout` clicks the university's own logout links first: the dashboard's, then the SSO admin's. Then it deletes the token, cookies and saved password. If the university site can't be reached, the stored data is still deleted and the failure is logged. The answer is `{"ok": true}` either way.
+`PUT /api/v1/me/photo` takes the image file as the request body, not as a form. The format is read from the file's first bytes, so the `Content-Type` header does not have to be right. Uploading again replaces the photo. `GET /api/v1/me/photo` returns it with its image type, so the frontend can send the `Authorization` header and show it as a blob URL. The photo is stored on this service only; the university site is not changed.
+
+`POST /api/v1/auth/logout` clicks the university's own logout links first: the dashboard's, then the SSO admin's. Then it ends the API session: the token stops working and the site session cookies are dropped. The saved password, notification settings, Telegram link and profile photo are kept, so change notifications keep running. If the university site can't be reached, the session still ends and the failure is logged. The answer is `{"ok": true}` either way.
 
 `/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
@@ -72,8 +78,10 @@ Errors are returned as `{"detail": "..."}`:
 | Status | Meaning |
 |---|---|
 | `401` | Missing, invalid or expired token (tokens last 1 day), expired site session, or the site rejected the saved password (`PUT /me/notifications`, then log in again) |
-| `404` | Unknown target, course or notice, no password form on the site, or notifications are off (`GET /me/notifications`) |
+| `404` | Unknown target, course or notice, no password form on the site, no profile photo (`GET /me/photo`), or notifications are off (`GET /me/notifications`) |
 | `409` | Disconnecting Telegram while notifications are on without an email |
+| `413` | The profile photo is larger than 2 MB (`PUT /me/photo`) |
+| `415` | The uploaded file is not a JPEG, PNG or WebP image (`PUT /me/photo`) |
 | `422` | Invalid notification settings, no email and no Telegram connected, no saved password (log in again), or the two passwords differ (`POST /me/password`) |
 | `502` | The university site could not be reached or failed |
 | `503` | Telegram is not set up on the server (`TELEGRAM_BOT_USERNAME` is missing) |
@@ -231,7 +239,7 @@ The frontend should show `wrong_password` and `error` to the student.
 
 **What is stored:** the site password, encrypted with `APP_SECRET_KEY`, plus the email, the fields, the last seen
 results and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
-(`DELETE /api/v1/me/telegram`) needs an email set first, so messages don't silently stop. Logging out deletes
+(`DELETE /api/v1/me/telegram`) needs an email set first, so messages don't silently stop. Logging out keeps
 all of it. The watcher signs in on every check rather than reusing the session, because a portal session lasts
 too short a time.
 

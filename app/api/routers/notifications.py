@@ -48,7 +48,7 @@ def save_notifications(
     Needs an email, or a connected Telegram (`/me/telegram/link`), or both. The watcher signs in with the password
     saved at login (kept **encrypted**), so nothing else is sent here. If the site rejects the saved password, for
     example after a change made on the site, log in again to save the new one. Turning notifications off keeps the
-    saved password; logging out deletes it.
+    saved password; logging out keeps it too.
     """
     if body.email is None and store.get_telegram_chat(user.id) is None:
         raise HTTPException(status_code=422, detail="Add an email or connect Telegram first")

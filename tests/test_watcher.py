@@ -561,24 +561,6 @@ def test_an_old_notification_password_moves_to_the_user_on_start(store):
 
 
 @needs_database
-def test_logout_deletes_everything_stored_for_the_user(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
-    store.set_telegram_chat(user.id, "42")
-    store.save_snapshot(user.id, {"fields": ["grade"], "courses": []})
-    store.create_link_code(user.id)
-
-    store.delete(user.id)
-
-    with store._connect() as db:
-        counts = db.execute(
-            "SELECT (SELECT count(*) FROM notification_settings), (SELECT count(*) FROM grade_snapshots), "
-            "(SELECT count(*) FROM telegram_chats), (SELECT count(*) FROM telegram_link_codes)"
-        ).fetchone()
-    assert counts == (0, 0, 0, 0)
-
-
-@needs_database
 def test_an_expired_token_leaves_the_saved_password_for_the_watcher(store):
     token = store.upsert_login("M1", "{}", "site-pass")
     user = store.get_by_token(token)
