@@ -130,11 +130,14 @@ class SiteScraper:
             for card in soup.select(section.container)
         ]
 
-    def fetch(self, url: str, headers: dict[str, str] | None = None) -> BeautifulSoup:
-        """Fetch a page, logging in again if the saved session is missing or expired."""
+    def fetch(self, url: str, headers: dict[str, str] | None = None, password_page: bool = False) -> BeautifulSoup:
+        """Fetch a page, logging in again if the saved session is missing or expired.
+
+        `password_page`: for pages with password inputs of their own, such as the change password form.
+        """
         with self._lock:
             response = self._request("GET", url, headers=headers)
-            if self._looks_logged_out(response):
+            if self._looks_logged_out(response, password_page):
                 raise LoginError("Site session expired, please log in again")
             self._save_cookies()
             return BeautifulSoup(response.text, "html.parser")
@@ -146,6 +149,13 @@ class SiteScraper:
             if self._looks_logged_out(response):
                 response.close()
                 raise LoginError("Site session expired, please log in again")
+            self._save_cookies()
+            return response
+
+    def post_form(self, url: str, data: dict[str, str]) -> requests.Response:
+        """Submit a form to the site and return the answer after redirects. The caller reads the answer."""
+        with self._lock:
+            response = self._request("POST", url, data=data)
             self._save_cookies()
             return response
 
@@ -162,7 +172,7 @@ class SiteScraper:
         if form is None:
             raise LoginError(f"No password form found on {login_page.url}")
 
-        payload = _form_payload(form)
+        payload = form_payload(form)
         payload[settings.username_field] = self.username
         payload[settings.password_field] = self._password
 
@@ -224,11 +234,14 @@ class SiteScraper:
 
         raise requests.TooManyRedirects(f"More than {MAX_REDIRECTS} redirects, last URL: {url}")
 
-    def _looks_logged_out(self, response: requests.Response) -> bool:
+    def _looks_logged_out(self, response: requests.Response, password_page: bool = False) -> bool:
         if _same_page(response.url, self.settings.login_url):
             return True
         # A password input only means "logged out" on the login host; dashboard pages
-        # can contain unrelated ones (e.g. the exam password field on the student page).
+        # can contain unrelated ones (e.g. the exam password field on the student page),
+        # and so does the change password form, which sits on the login host too.
+        if password_page:
+            return False
         on_login_host = urlparse(response.url).netloc == urlparse(self.settings.login_url).netloc
         return on_login_host and find_login_form(response.text) is not None
 
@@ -237,7 +250,7 @@ class SiteScraper:
             self._on_save(dump_cookies(self.session.cookies))
 
 
-def _form_payload(form: Tag) -> dict[str, str]:
+def form_payload(form: Tag) -> dict[str, str]:
     """Collect every named input in the form, including hidden CSRF tokens."""
     payload = {}
     for element in form.find_all("input"):

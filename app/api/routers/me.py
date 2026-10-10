@@ -2,8 +2,17 @@ from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
-from ...schemas import Detail, NoticeDetail, NoticesPage, ProfilePage, SchedulePage, ScoresPage
-from ...scraping import notices
+from ...schemas import (
+    Detail,
+    NoticeDetail,
+    NoticesPage,
+    PasswordChangeIn,
+    PasswordChangeResult,
+    ProfilePage,
+    SchedulePage,
+    ScoresPage,
+)
+from ...scraping import notices, password_form
 from ...scraping.client import SiteScraper
 from ...scraping.targets import TARGETS_BY_NAME
 from ..deps import current_scraper
@@ -94,3 +103,22 @@ def download_notice_file(
         headers=headers,
         background=BackgroundTask(upstream.close),
     )
+
+
+@router.post(
+    "/password",
+    summary="Change my site password",
+    response_model=PasswordChangeResult,
+    responses={
+        **UNAUTHORIZED,
+        404: {"model": Detail, "description": "The site page has no password form."},
+        **SITE_DOWN,
+    },
+)
+def change_password(body: PasswordChangeIn, scraper: SiteScraper = Depends(current_scraper)):
+    """Submit the password change form on the university SSO site with the new password.
+
+    `changed` is true when the site answers with its sign-in page and no change form. Otherwise `messages` holds the
+    alert and error texts from the page. Passwords that do not match are rejected before the site is contacted.
+    """
+    return password_form.change_password(scraper, body.password)

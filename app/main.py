@@ -14,9 +14,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 API_PREFIX = "/api/v1"
 
 DESCRIPTION = """
-Lets each student sign in with **their own** university account and read their data
-(profile, scores, timetable, notices, courses and lecture plans) as JSON. Students can also
-get a Telegram or email message when a watched result changes.
+Lets each student sign in with **their own** university account, read their data
+(profile, scores, timetable, notices, courses and lecture plans) as JSON, and change their
+site password. Students can also get a Telegram or email message when a watched result changes.
 
 ## How to use
 
@@ -24,10 +24,11 @@ get a Telegram or email message when a watched result changes.
 2. Click **Authorize** (top right) and paste the token, or send `Authorization: Bearer <token>`.
 3. Call any endpoint under *My data* and *Courses*. Data is read from the university site on every request, so calls can take a few seconds.
 4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with your site password and the fields to watch. An email is optional once Telegram is connected. See *Notifications*.
+5. To change the site password: `POST /me/password` with `password` and `confirm_password`. `changed` is `true` when the site answers with its sign-in page instead of the change form; otherwise `messages` says why. Saved notifications keep the old password, so save them again with `PUT /me/notifications`.
 
 ## Privacy
 
-* Your site password is used to sign in and is **not stored**, with one exception: if you turn on change notifications, it is kept **encrypted**, with your email, watched fields, last results and Telegram chat, so the watcher can sign in every 30 minutes and check your scores. Turning notifications off deletes the password, email and results (the Telegram link stays until you disconnect it). Logging out deletes everything.
+* Your site password is used to sign in or to change it, and is **not stored**, with one exception: if you turn on change notifications, it is kept **encrypted**, with your email, watched fields, last results and Telegram chat, so the watcher can sign in every 30 minutes and check your scores. Turning notifications off deletes the password, email and results (the Telegram link stays until you disconnect it). Logging out deletes everything.
 * Only the resulting site session cookies are kept, **encrypted** in the database.
 * Your API token is stored as a SHA-256 hash, so it cannot be recovered. Logging in again issues a new token and invalidates the old one.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
@@ -35,7 +36,7 @@ get a Telegram or email message when a watched result changes.
 
 TAGS = [
     {"name": "Auth", "description": "Sign in with a site account and manage the API token."},
-    {"name": "My data", "description": "Your dashboard pages as JSON, scraped live on each request."},
+    {"name": "My data", "description": "Your pages on the university site as JSON, scraped live on each request."},
     {"name": "Courses", "description": "Courses linked from the dashboard and their lecture plans."},
     {
         "name": "Notifications",

@@ -39,6 +39,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
 | `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
+| `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
 | `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields, status of the last check |
 | `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them; the password is checked with the site |
 | `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved password |
@@ -58,6 +59,8 @@ The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows ke
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 
+`POST /api/v1/me/password` submits the change form on the university site with the new password, typed twice as `password` and `confirm_password`. The new password is not stored. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. Saved change notifications keep the old password, so save them again with `PUT /me/notifications` after a change.
+
 `/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
 Errors are returned as `{"detail": "..."}`:
@@ -65,9 +68,9 @@ Errors are returned as `{"detail": "..."}`:
 | Status | Meaning |
 |---|---|
 | `401` | Missing or invalid token, expired site session, or the site rejected a password (`PUT /me/notifications`) |
-| `404` | Unknown target, course or notice, or notifications are off (`GET /me/notifications`) |
+| `404` | Unknown target, course or notice, no password form on the site, or notifications are off (`GET /me/notifications`) |
 | `409` | Disconnecting Telegram while notifications are on without an email |
-| `422` | Invalid notification settings, or no email and no Telegram connected |
+| `422` | Invalid notification settings, no email and no Telegram connected, or the two passwords differ (`POST /me/password`) |
 | `502` | The university site could not be reached or failed |
 | `503` | Telegram is not set up on the server (`TELEGRAM_BOT_USERNAME` is missing) |
 

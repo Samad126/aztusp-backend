@@ -359,3 +359,23 @@ class NoticeDetail(BaseModel):
     views: str = Field("", description="`Müraciətlərin sayı`.")
     attachments: list[NoticeAttachment] = Field([], description="Files attached to the notice (`Qoşma fayl`).")
     body: str = Field("", description="Message text, with line breaks kept.")
+
+
+# --- /me/password -----------------------------------------------------------------------
+
+
+class PasswordChangeIn(BaseModel):
+    password: str = Field(description="The new site password.")
+    confirm_password: str = Field(description="The new password again. Must match `password`.")
+
+    @model_validator(mode="after")
+    def passwords_match(self):
+        if self.password != self.confirm_password:
+            raise ValueError("password and confirm_password must match")
+        return self
+
+
+class PasswordChangeResult(BaseModel):
+    changed: bool = Field(description="True when the site answered with its sign-in page and no change form.")
+    url: str = Field(description="Page the site answered with, after any redirects.")
+    messages: list[str] = Field(description="Alert and error texts on that page. Empty when `changed` is true.")

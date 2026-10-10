@@ -9,6 +9,7 @@ from ..schemas import Detail
 from ..scraping.client import LoginError
 from ..scraping.courses import CourseNotFound
 from ..scraping.notices import FileNotFound, NoticeNotFound
+from ..scraping.password_form import PasswordFormNotFound
 
 UNAUTHORIZED = {
     401: {"model": Detail, "description": "Missing or invalid token, or the site session expired (log in again)."}
@@ -35,6 +36,10 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(FileNotFound)
     async def file_not_found(request: Request, exc: FileNotFound):
+        return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(PasswordFormNotFound)
+    async def password_form_not_found(request: Request, exc: PasswordFormNotFound):
         return JSONResponse({"detail": str(exc)}, status_code=404)
 
     @app.exception_handler(psycopg.OperationalError)
