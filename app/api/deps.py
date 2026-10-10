@@ -6,6 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from ..config import Settings
 from ..db import User, UserStore
 from ..scraping.client import SiteScraper
+from ..timetable.config import TimetableSource
 
 bearer = HTTPBearer(
     auto_error=False,
@@ -22,6 +23,11 @@ def get_settings() -> Settings:
 def get_store() -> UserStore:
     settings = get_settings()
     return UserStore(settings.database_url, settings.secret_key)
+
+
+@lru_cache
+def get_timetable_source() -> TimetableSource | None:
+    return TimetableSource.from_env()
 
 
 def current_user(

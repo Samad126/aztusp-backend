@@ -40,7 +40,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/health` | – | Health check (unversioned) |
 | `GET` | `/api/v1/me/profile` | ✔ | Student profile |
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
-| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`) |
+| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`). Falls back to the channel's PDF when the university has none, with `?view=list` (default) or `?view=grid`, see [Timetable fallback](#timetable-fallback) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
@@ -127,6 +127,32 @@ Copy [.env.example](.env.example) to `.env`.
 | `REQUEST_TIMEOUT` | – | Seconds per request to the portal (default `20`) |
 | `TELEGRAM_BOT_USERNAME` | For Telegram | The bot's username without `@`. The API uses it to build the connect link. The other watcher settings are in [Grade watcher](#grade-watcher) |
 
+### Timetable fallback
+
+When the university site has no lessons for a student, `GET /me/schedule` searches a Telegram channel that posts timetable
+PDFs. It takes the student's group codes from their course names (`Math [M1]` gives `M1`), reads the newest PDFs for those
+groups, and returns them in one of two views, chosen with `?view=`:
+
+- `list` (default): one row per session (day, time, week, course, type, room, teacher).
+- `grid`: one row per lesson time, `Dərs` then one column per weekday, as the university's own timetable is laid out.
+
+Both weeks are in one block per group, so a student sees one table. `week` is `alt həftə`, `üst həftə` or `hər həftə` (every
+week). In the grid, a card that is in one week only starts with that week's name; a card in every week does not. Both views
+come from the same PDF and keep its text as printed, except that the export's `?` is read as `ə` (or `Ə` at the start of a
+name). The export has lost ş, ç, ı and ğ, so those stay as plain letters, for example `masin`. `url` points at the channel post. The PDFs need one page per group,
+laid out like the aSc export: the group code above a grid with the times across the top and the weekdays down the side.
+The university's own timetable is returned unchanged, whatever the view.
+
+| Variable | Description |
+|---|---|
+| `SCHEDULE_CHANNEL` | Public username of the channel, without `@`, or the `-100...` id of a private channel (from its link, `#-1004368645921` gives `-1004368645921`). The account must be a member of a private channel. Leave all four variables unset to turn the fallback off |
+| `SCHEDULE_TELEGRAM_API_ID`, `SCHEDULE_TELEGRAM_API_HASH` | From [my.telegram.org](https://my.telegram.org), under *API development tools* |
+| `SCHEDULE_TELEGRAM_SESSION` | Login string for a Telegram account that can read the channel. Create it with `python -m app.timetable.login` |
+
+A bot cannot list a channel's older posts, so the fallback signs in as a user account. Keep the session string as secret as
+a password, and use it only on the server: Telegram can revoke a session that is used from two networks at once. If the
+session stops working, the endpoint still answers with the university's (empty) timetable and logs the error.
+
 ## Running
 
 ### Docker Compose
@@ -177,6 +203,12 @@ app/
     parsing.py       HTML table/pair parsing and field-name translation
     targets.py       what to scrape (CSS selectors) and the field-name translations
     courses.py       course list and lecture plan scraping
+  timetable/         fallback timetable from the channel's PDFs
+    service.py       university timetable, or the channel's when the university has none
+    channel.py       searches the channel's newest PDFs for the student's groups (Telethon)
+    pdf.py           reads one group's lessons from a timetable PDF (one page per group)
+    config.py        channel and Telegram session settings
+    login.py         one-time sign in that prints the session string
     cookies.py       shares session cookies across portal subdomains
   watcher/           grade watcher (python -m app.watcher)
     __main__.py      the loop, --once and the test flags

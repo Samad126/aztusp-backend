@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api.deps import get_store
+from .api.deps import get_store, get_timetable_source
 from .api.errors import register_error_handlers
 from .api.routers import auth, courses, me, notifications, system, telegram
 
@@ -52,8 +52,9 @@ TAGS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Connect and create tables now, so a bad config or unreachable database stops startup
-    # with a clear error instead of failing every request later.
+    # with a clear error instead of failing every request later. The timetable fallback is checked the same way.
     get_store()
+    get_timetable_source()
     yield
 
 

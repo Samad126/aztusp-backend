@@ -34,6 +34,7 @@ def store():
 def client(store, monkeypatch):
     app.dependency_overrides[deps.get_settings] = lambda: SETTINGS
     app.dependency_overrides[deps.get_store] = lambda: store
+    app.dependency_overrides[deps.get_timetable_source] = lambda: None
 
     def fake_login(self, password):
         if password != "good":

@@ -197,3 +197,15 @@ def test_course_name_falls_back_to_dashboard_name_without_group_suffix():
 
     for name in ("notices", "scores", "attendance"):
         assert courses._fetch_tab(NoHeading(), "7", name)[2] == "Math"
+
+
+def test_student_groups_come_from_the_course_name_suffix(monkeypatch):
+    courses_on_dashboard = [
+        {"lec_open_idx": "1", "sem_code": None, "name": "Math [M1]", "path": "/a"},
+        {"lec_open_idx": "2", "sem_code": None, "name": "Art [M1]", "path": "/b"},
+        {"lec_open_idx": "3", "sem_code": None, "name": "Physics [AZ-101]", "path": "/c"},
+        {"lec_open_idx": "4", "sem_code": None, "name": "Chemistry", "path": "/d"},
+    ]
+    monkeypatch.setattr(courses, "list_courses", lambda scraper: courses_on_dashboard)
+
+    assert courses.student_groups(None) == ["M1", "AZ-101"]

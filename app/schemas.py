@@ -229,7 +229,9 @@ class ScheduleSections(BaseModel):
         description=(
             "One block per semester shown on the page, in page order. `title` is the heading "
             "(e.g. `2026İl payiz Semestr Dərs cədvəli`); `rows` are timetable rows keyed by the column titles "
-            "(`Dərs`, then one column per weekday). `rows` is empty when no lessons are scheduled."
+            "(`Dərs`, then one column per weekday). In the channel fallback there is one block per group with both weeks in it: "
+            "`rows` are either one per session with `day`, `time`, `week`, `course`, `type`, `room` and `teacher` "
+            "(`view=list`), or the university's layout (`view=grid`). `rows` is empty when no lessons are scheduled."
         ),
     )
 

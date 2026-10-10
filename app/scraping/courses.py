@@ -57,6 +57,19 @@ def list_courses(scraper: SiteScraper) -> list[dict]:
     return courses
 
 
+GROUP_SUFFIX = re.compile(r"\[([^\[\]]+)\]\s*$")
+
+
+def student_groups(scraper: SiteScraper) -> list[str]:
+    """Group codes from the dashboard's course names (`Math [M1]` gives `M1`), in order and without repeats."""
+    groups: list[str] = []
+    for course in list_courses(scraper):
+        match = GROUP_SUFFIX.search(course["name"])
+        if match and (group := match.group(1).strip()) not in groups:
+            groups.append(group)
+    return groups
+
+
 def course_params(scraper: SiteScraper, lec_open_idx: str) -> dict[str, str]:
     """Query params shared by every course tab (lec_open_idx, lecture_code, sem_code)."""
     return _course_context(scraper, lec_open_idx)[0]
