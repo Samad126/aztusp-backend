@@ -2,6 +2,8 @@ import logging
 
 import psycopg
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from requests import RequestException
 
@@ -12,12 +14,19 @@ from ..scraping.notices import FileNotFound, NoticeNotFound
 from ..scraping.password_form import PasswordFormNotFound
 
 UNAUTHORIZED = {
-    401: {"model": Detail, "description": "Missing or invalid token, or the site session expired (log in again)."}
+    401: {"model": Detail, "description": "Missing, invalid or expired token, or the site session expired (log in again)."}
 }
 SITE_DOWN = {502: {"model": Detail, "description": "The university site could not be reached or failed."}}
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError):
+        # FastAPI repeats each submitted value under "input", so a wrong login or password change would send the
+        # password back. The location and message are enough to fix the request.
+        errors = [{key: value for key, value in error.items() if key != "input"} for error in exc.errors()]
+        return JSONResponse({"detail": jsonable_encoder(errors)}, status_code=422)
+
     @app.exception_handler(LoginError)
     async def login_error(request: Request, exc: LoginError):
         return JSONResponse({"detail": str(exc)}, status_code=401)

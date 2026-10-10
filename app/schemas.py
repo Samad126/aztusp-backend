@@ -19,7 +19,9 @@ class Credentials(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    token: str = Field(description="API token. Send it as `Authorization: Bearer <token>`. Shown only once.")
+    token: str = Field(
+        description="API token. Send it as `Authorization: Bearer <token>`. Shown only once. It expires after 1 day, then log in again."
+    )
 
 
 class OkResponse(BaseModel):

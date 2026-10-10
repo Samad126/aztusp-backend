@@ -348,3 +348,29 @@ def test_turning_notifications_off_keeps_the_saved_password(client, store):
     client.delete("/api/v1/me/notifications", headers=headers)
 
     assert store.saved_password(user_of(store, headers).id) == "good"
+
+
+def test_a_token_lasts_one_day(client, store):
+    login(client)
+
+    with store._connect() as db:
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
+    assert 0.99 < float(days_left) <= 1
+
+
+def test_a_token_stops_working_when_it_expires(client, store):
+    headers = login(client)
+    assert client.get("/api/v1/me/notifications", headers=headers).status_code == 404  # signed in; notifications are just off
+
+    with store._connect() as db:
+        db.execute("UPDATE users SET token_expires_at = now() - interval '1 minute'")
+
+    assert client.get("/api/v1/me/notifications", headers=headers).status_code == 401
+
+
+def test_a_token_without_an_expiry_needs_a_login(client, store):
+    headers = login(client)
+    with store._connect() as db:
+        db.execute("UPDATE users SET token_expires_at = NULL")
+
+    assert client.get("/api/v1/me/notifications", headers=headers).status_code == 401

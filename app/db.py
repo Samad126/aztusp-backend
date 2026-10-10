@@ -12,6 +12,7 @@ from psycopg.types.json import Jsonb
 log = logging.getLogger(__name__)
 
 LINK_CODE_MINUTES = 15
+TOKEN_DAYS = 1
 
 SCHEMA = (
     """
@@ -19,11 +20,15 @@ SCHEMA = (
         id BIGSERIAL PRIMARY KEY,
         site_username TEXT NOT NULL UNIQUE,
         token_hash TEXT NOT NULL UNIQUE,
+        token_expires_at TIMESTAMPTZ,
         cookies_enc BYTEA,
         password_enc BYTEA,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # Tokens used to last forever. Databases created before that get the column here; rows without an expiry are
+    # treated as expired, so those students log in once.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ",
     # Databases created before the password was stored at login get the column here.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc BYTEA",
     # Students who turned change notifications on. The watcher signs in with the password saved on the user.
@@ -109,7 +114,7 @@ def _hash(token: str) -> str:
 
 
 class UserStore:
-    """Users, their API tokens (stored hashed), their site session cookies and site password (both stored encrypted),
+    """Users, their API tokens (stored hashed, with an expiry), their site session cookies and site password (both stored encrypted),
     the change notifications of students who turned them on, and their Telegram chats."""
 
     def __init__(self, database_url: str, secret_key: str):
@@ -136,19 +141,22 @@ class UserStore:
         return psycopg.connect(self.database_url)
 
     def upsert_login(self, site_username: str, cookies: str, password: str) -> str:
-        """Create or update the user after a successful site login; returns a fresh API token.
+        """Create or update the user after a successful site login; returns a fresh API token that lasts TOKEN_DAYS.
 
         The password is kept encrypted, so change notifications can sign in later without asking for it again.
         """
         token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=TOKEN_DAYS)
         encrypted_cookies = self.fernet.encrypt(cookies.encode())
         encrypted_password = self.fernet.encrypt(password.encode())
         with self._connect() as db:
             db.execute(
-                "INSERT INTO users (site_username, token_hash, cookies_enc, password_enc) VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, cookies_enc = excluded.cookies_enc, "
+                "INSERT INTO users (site_username, token_hash, token_expires_at, cookies_enc, password_enc) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, "
+                "token_expires_at = excluded.token_expires_at, cookies_enc = excluded.cookies_enc, "
                 "password_enc = excluded.password_enc",
-                (site_username, _hash(token), encrypted_cookies, encrypted_password),
+                (site_username, _hash(token), expires_at, encrypted_cookies, encrypted_password),
             )
             # The login proves this password works, so a wrong-password status from an older one is cleared.
             db.execute(
@@ -159,7 +167,8 @@ class UserStore:
         return token
 
     def get_by_token(self, token: str) -> User | None:
-        return self._get_user("token_hash = %s", _hash(token))
+        """The user a token belongs to, or None if the token is unknown or has expired."""
+        return self._get_user("token_hash = %s AND token_expires_at > now()", _hash(token))
 
     def _get_user(self, condition: str, value: object) -> User | None:
         with self._connect() as db:

@@ -576,3 +576,16 @@ def test_logout_deletes_everything_stored_for_the_user(store):
             "(SELECT count(*) FROM telegram_chats), (SELECT count(*) FROM telegram_link_codes)"
         ).fetchone()
     assert counts == (0, 0, 0, 0)
+
+
+@needs_database
+def test_an_expired_token_leaves_the_saved_password_for_the_watcher(store):
+    token = store.upsert_login("M1", "{}", "site-pass")
+    user = store.get_by_token(token)
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
+    with store._connect() as db:
+        db.execute("UPDATE users SET token_expires_at = now() - interval '1 minute'")
+
+    assert store.get_by_token(token) is None
+    [subscription] = store.subscribers()
+    assert subscription.password == "site-pass"

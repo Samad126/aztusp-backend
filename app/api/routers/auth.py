@@ -28,7 +28,7 @@ def login(
 
     The session cookies and the password are kept **encrypted**. The password lets change notifications sign in
     later without asking for it again, and `POST /me/password` keeps it up to date. Logging in again replaces the
-    previous token and the saved password.
+    previous token and the saved password. The token lasts 1 day.
     """
     scraper = SiteScraper(settings, credentials.username)
     scraper.login(credentials.password)

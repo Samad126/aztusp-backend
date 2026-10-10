@@ -13,7 +13,7 @@ pages, and returns structured data with English field names.
 ## How it works
 
 1. `POST /api/v1/auth/login` with the site username and password. The service signs in
-   to the portal and returns an API token.
+   to the portal and returns an API token, which lasts 1 day.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
 4. Students can also turn on change notifications, so they get a message when a watched result changes. See [Grade watcher](#grade-watcher).
@@ -22,7 +22,7 @@ pages, and returns structured data with English field names.
 
 - The site **password is stored**, **encrypted** (Fernet), from the login onward. Change notifications sign in with it, so students don't type it again. A successful `POST /api/v1/me/password` replaces it. Logging out deletes it. Turning notifications off keeps it.
 - The portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
-- API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again.
+- API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again. Tokens expire after 1 day, so the user logs in again then.
 - When the portal session expires the API answers `401` and the user logs in again.
 
 ## API
