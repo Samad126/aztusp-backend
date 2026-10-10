@@ -165,7 +165,8 @@ database. Without it they are skipped. CI sets it.
 app/
   main.py            app factory: metadata, error handlers, router mounting under /api/v1
   config.py          environment configuration
-  db.py              PostgreSQL store (hashed tokens, encrypted cookies and passwords, notification settings)
+  db.py              PostgreSQL store (hashed tokens, encrypted cookies and passwords, notification settings, profile photos)
+  photos.py          profile photo size limit and format check (read from the file's first bytes)
   schemas.py         request/response models
   api/
     deps.py          settings, user store and per-request authenticated scraper
