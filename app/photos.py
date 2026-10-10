@@ -1,6 +1,6 @@
 """Checks for uploaded profile photos: a size limit, and the image format read from the file's first bytes."""
 
-MAX_PHOTO_BYTES = 2 * 1024 * 1024
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
 
 
 # The uploader's Content-Type header is not trusted; only the bytes decide what the photo is.

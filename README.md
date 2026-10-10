@@ -43,7 +43,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
-| `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 2 MB at most) |
+| `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
 | `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields, status of the last check |
@@ -80,7 +80,7 @@ Errors are returned as `{"detail": "..."}`:
 | `401` | Missing, invalid or expired token (tokens last 1 day), expired site session, or the site rejected the saved password (`PUT /me/notifications`, then log in again) |
 | `404` | Unknown target, course or notice, no password form on the site, no profile photo (`GET /me/photo`), or notifications are off (`GET /me/notifications`) |
 | `409` | Disconnecting Telegram while notifications are on without an email |
-| `413` | The profile photo is larger than 2 MB (`PUT /me/photo`) |
+| `413` | The profile photo is larger than 10 MB (`PUT /me/photo`) |
 | `415` | The uploaded file is not a JPEG, PNG or WebP image (`PUT /me/photo`) |
 | `422` | Invalid notification settings, no email and no Telegram connected, no saved password (log in again), or the two passwords differ (`POST /me/password`) |
 | `502` | The university site could not be reached or failed |

@@ -25,7 +25,7 @@ site password, and set a profile photo. Students can also get a Telegram or emai
 3. Call any endpoint under *My data* and *Courses*. Data is read from the university site on every request, so calls can take a few seconds.
 4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with the fields to watch. Your login password is saved and used for the checks, and an email is optional once Telegram is connected. See *Notifications*.
 5. To change the site password: `POST /me/password` with `password` and `confirm_password`. `changed` is `true` when the site answers with its sign-in page instead of the change form; otherwise `messages` says why. After a change, the saved password is updated too, so notifications keep working.
-6. To set a profile photo: `PUT /me/photo` with the image file as the request body (JPEG, PNG or WebP, 2 MB at most). `GET /me/photo` returns it and `DELETE /me/photo` removes it. The photo is kept in this service, not on the university site.
+6. To set a profile photo: `PUT /me/photo` with the image file as the request body (JPEG, PNG or WebP, 10 MB at most). `GET /me/photo` returns it and `DELETE /me/photo` removes it. The photo is kept in this service, not on the university site.
 7. To sign out: `POST /auth/logout`. It also signs out of the university site and ends this login, so the token stops working. Your saved data is kept, so change notifications keep running.
 
 ## Privacy
