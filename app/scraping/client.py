@@ -174,7 +174,7 @@ class SiteScraper:
 
         dashboard = self._request("GET", settings.dashboard_url)
         if self._looks_logged_out(dashboard):
-            raise LoginError("Login failed: dashboard redirected back to the login page")
+            raise LoginError("Incorrect username or password")
 
         self._save_cookies()
         log.info("Logged in as %s", self.username)

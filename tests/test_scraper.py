@@ -1,7 +1,8 @@
+import pytest
 from bs4 import BeautifulSoup
 
 from app.config import Settings
-from app.scraping.client import SiteScraper
+from app.scraping.client import LoginError, SiteScraper
 from app.scraping.parsing import column_keys, parse_pairs, parse_table
 from app.scraping.targets import TARGETS_BY_NAME, Section, Target
 
@@ -88,3 +89,27 @@ def test_schedule_lists_every_semester_block_in_order():
     blocks = SiteScraper._read_section(soup, target.sections["semesters"])
     assert [b["title"] for b in blocks] == ["2026 payiz Dərs cədvəli", "2027 yaz Dərs cədvəli"]
     assert [b["rows"] for b in blocks] == [[{"Dərs": "1", "Cümə": "Math"}], [{"Dərs": "1", "Cümə": "Art"}]]
+
+
+class FakeResponse:
+    def __init__(self, url, text="", status_code=200):
+        self.url = url
+        self.text = text
+        self.status_code = status_code
+        self.headers = {}
+
+    def raise_for_status(self):
+        pass
+
+
+LOGIN_FORM = '<form action="/sso" method="post"><input type="text" name="username"><input type="password" name="password"></form>'
+
+
+def test_wrong_password_reports_incorrect_credentials(monkeypatch):
+    scraper = SiteScraper(make_settings(), "user")
+    # The site answers every request with its login page, so the dashboard bounces back to it.
+    page = FakeResponse("https://login.example.com/", LOGIN_FORM)
+    monkeypatch.setattr(scraper, "_request", lambda method, url, **kwargs: page)
+
+    with pytest.raises(LoginError, match="^Incorrect username or password$"):
+        scraper.login("wrong")
