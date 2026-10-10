@@ -17,11 +17,13 @@ pages, and returns structured data with English field names.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
 4. Students can also turn on change notifications, so they get a message when a watched result changes. See [Grade watcher](#grade-watcher).
+5. `POST /api/v1/auth/logout` signs out of the university site too, then deletes the stored data.
 
 ### Privacy and security
 
 - The site **password is stored**, **encrypted** (Fernet), from the login onward. Change notifications sign in with it, so students don't type it again. A successful `POST /api/v1/me/password` replaces it. Logging out deletes it. Turning notifications off keeps it.
 - The portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
+- Logging out also signs out of the university dashboard and SSO. If the university site can't be reached, the stored data is still deleted.
 - API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again. Tokens expire after 1 day, so the user logs in again then.
 - When the portal session expires the API answers `401` and the user logs in again.
 
@@ -61,18 +63,22 @@ Every data endpoint scrapes the university site live, so a call takes as long as
 
 `POST /api/v1/me/password` submits the change form on the university site with the new password, typed twice as `password` and `confirm_password`. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
 
+`POST /api/v1/auth/logout` clicks the university's own logout links first: the dashboard's, then the SSO admin's. Then it deletes the token, cookies and saved password. If the university site can't be reached, the stored data is still deleted and the failure is logged. The answer is `{"ok": true}` either way.
+
 `/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
 Errors are returned as `{"detail": "..."}`:
 
 | Status | Meaning |
 |---|---|
-| `401` | Missing or invalid token, expired site session, or the site rejected the saved password (`PUT /me/notifications`, then log in again) |
+| `401` | Missing, invalid or expired token (tokens last 1 day), expired site session, or the site rejected the saved password (`PUT /me/notifications`, then log in again) |
 | `404` | Unknown target, course or notice, no password form on the site, or notifications are off (`GET /me/notifications`) |
 | `409` | Disconnecting Telegram while notifications are on without an email |
 | `422` | Invalid notification settings, no email and no Telegram connected, no saved password (log in again), or the two passwords differ (`POST /me/password`) |
 | `502` | The university site could not be reached or failed |
 | `503` | Telegram is not set up on the server (`TELEGRAM_BOT_USERNAME` is missing) |
+
+For invalid input (`422`), `detail` is a list with one entry per field instead of a string. Each entry has `loc` (the field, for example `["body", "password"]`), `msg` and `type`. The submitted values are not repeated, so a password is never sent back.
 
 ### Example
 
@@ -158,7 +164,7 @@ app/
     errors.py        exception -> HTTP status handlers, shared error responses
     routers/         auth, me (profile/scores/...), notifications, telegram, courses, system (health)
   scraping/
-    client.py        portal login, session handling, redirects
+    client.py        portal login and logout, session handling, redirects
     parsing.py       HTML table/pair parsing and field-name translation
     targets.py       what to scrape (CSS selectors) and the field-name translations
     courses.py       course list and lecture plan scraping
