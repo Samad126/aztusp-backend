@@ -23,12 +23,13 @@ site password. Students can also get a Telegram or email message when a watched 
 1. `POST /auth/login` with your site username and password. The response contains an API **token**.
 2. Click **Authorize** (top right) and paste the token, or send `Authorization: Bearer <token>`.
 3. Call any endpoint under *My data* and *Courses*. Data is read from the university site on every request, so calls can take a few seconds.
-4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with your site password and the fields to watch. An email is optional once Telegram is connected. See *Notifications*.
-5. To change the site password: `POST /me/password` with `password` and `confirm_password`. `changed` is `true` when the site answers with its sign-in page instead of the change form; otherwise `messages` says why. Saved notifications keep the old password, so save them again with `PUT /me/notifications`.
+4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with the fields to watch. Your login password is saved and used for the checks, and an email is optional once Telegram is connected. See *Notifications*.
+5. To change the site password: `POST /me/password` with `password` and `confirm_password`. `changed` is `true` when the site answers with its sign-in page instead of the change form; otherwise `messages` says why. After a change, the saved password is updated too, so notifications keep working.
 
 ## Privacy
 
-* Your site password is used to sign in or to change it, and is **not stored**, with one exception: if you turn on change notifications, it is kept **encrypted**, with your email, watched fields, last results and Telegram chat, so the watcher can sign in every 30 minutes and check your scores. Turning notifications off deletes the password, email and results (the Telegram link stays until you disconnect it). Logging out deletes everything.
+* Your site password is kept **encrypted** from the login onward, so change notifications can sign in every 30 minutes and check your scores. A password change replaces it. Logging out deletes it; turning notifications off keeps it.
+* Your email, watched fields, last results and Telegram chat are kept only while notifications are on. Turning them off deletes the email and results (the Telegram link stays until you disconnect it). Logging out deletes everything.
 * Only the resulting site session cookies are kept, **encrypted** in the database.
 * Your API token is stored as a SHA-256 hash, so it cannot be recovered. Logging in again issues a new token and invalidates the old one.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
@@ -40,7 +41,7 @@ TAGS = [
     {"name": "Courses", "description": "Courses linked from the dashboard and their lecture plans."},
     {
         "name": "Notifications",
-        "description": "Get a message by email, on Telegram, or both when a watched result changes. Connect Telegram with a link, then turn notifications on with your site password.",
+        "description": "Get a message by email, on Telegram, or both when a watched result changes. Connect Telegram with a link, then turn notifications on.",
     },
     {"name": "System", "description": "Service status and metadata."},
 ]

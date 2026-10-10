@@ -32,9 +32,9 @@ def read_notifications(user: User = Depends(current_user), store: UserStore = De
     response_model=NotificationsOut,
     responses={
         **UNAUTHORIZED,
-        401: {"model": Detail, "description": "Missing or invalid token, or the site rejected the password."},
+        401: {"model": Detail, "description": "Missing or invalid token, or the site rejected the saved password (log in again)."},
         **SITE_DOWN,
-        422: {"model": Detail, "description": "No email and no Telegram connected, or invalid settings."},
+        422: {"model": Detail, "description": "No email and no Telegram connected, no saved password, or invalid settings."},
     },
 )
 def save_notifications(
@@ -45,14 +45,18 @@ def save_notifications(
 ):
     """Turn change notifications on, or replace them.
 
-    Needs an email, or a connected Telegram (`/me/telegram/link`), or both. The password is checked by signing in
-    to the site, then stored **encrypted** so the watcher can sign in every 30 minutes and read your scores. Save
-    it again after you change it on the site. Turning notifications off or logging out deletes it.
+    Needs an email, or a connected Telegram (`/me/telegram/link`), or both. The watcher signs in with the password
+    saved at login (kept **encrypted**), so nothing else is sent here. If the site rejects the saved password, for
+    example after a change made on the site, log in again to save the new one. Turning notifications off keeps the
+    saved password; logging out deletes it.
     """
     if body.email is None and store.get_telegram_chat(user.id) is None:
         raise HTTPException(status_code=422, detail="Add an email or connect Telegram first")
-    SiteScraper(settings, user.site_username).login(body.password)  # 401 if the site rejects it
-    store.set_notifications(user.id, Notifications(email=body.email, fields=body.fields), body.password)
+    password = store.saved_password(user.id)
+    if password is None:
+        raise HTTPException(status_code=422, detail="No saved password: log in again first")
+    SiteScraper(settings, user.site_username).login(password)  # 401 if the site rejects it
+    store.set_notifications(user.id, Notifications(email=body.email, fields=body.fields))
     return NotificationsOut(**asdict(store.get_notifications(user.id)))
 
 
@@ -63,6 +67,6 @@ def save_notifications(
     responses=UNAUTHORIZED,
 )
 def delete_notifications(user: User = Depends(current_user), store: UserStore = Depends(get_store)):
-    """Stop watching: deletes the email, the saved password and the saved results. The Telegram link stays."""
+    """Stop watching: deletes the email and the saved results. The saved password and the Telegram link stay."""
     store.delete_notifications(user.id)
     return {"ok": True}

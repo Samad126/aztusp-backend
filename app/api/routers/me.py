@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
+from ...db import UserStore
 from ...schemas import (
     Detail,
     NoticeDetail,
@@ -15,7 +16,7 @@ from ...schemas import (
 from ...scraping import notices, password_form
 from ...scraping.client import SiteScraper
 from ...scraping.targets import TARGETS_BY_NAME
-from ..deps import current_scraper
+from ..deps import current_scraper, get_store
 from ..errors import SITE_DOWN, UNAUTHORIZED
 
 router = APIRouter(prefix="/me", tags=["My data"])
@@ -115,10 +116,19 @@ def download_notice_file(
         **SITE_DOWN,
     },
 )
-def change_password(body: PasswordChangeIn, scraper: SiteScraper = Depends(current_scraper)):
+def change_password(
+    body: PasswordChangeIn,
+    scraper: SiteScraper = Depends(current_scraper),
+    store: UserStore = Depends(get_store),
+):
     """Submit the password change form on the university SSO site with the new password.
 
     `changed` is true when the site answers with its sign-in page and no change form. Otherwise `messages` holds the
     alert and error texts from the page. Passwords that do not match are rejected before the site is contacted.
+
+    After a change, the password saved at login is replaced with the new one, so change notifications keep signing in.
     """
-    return password_form.change_password(scraper, body.password)
+    result = password_form.change_password(scraper, body.password)
+    if result["changed"]:
+        store.save_password(scraper.user.id, body.password)
+    return result

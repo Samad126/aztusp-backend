@@ -11,7 +11,7 @@ from app.api import deps
 from app.config import Settings
 from app.db import UserStore
 from app.main import app
-from app.scraping import courses
+from app.scraping import courses, password_form
 from app.scraping.client import LoginError, SiteScraper
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -150,7 +150,7 @@ def test_docs_expose_only_new_names(client):
 
 
 
-NOTIFICATIONS = {"email": "student@example.com", "fields": ["grade"], "password": "good"}
+NOTIFICATIONS = {"email": "student@example.com", "fields": ["grade"]}
 
 
 def user_of(store, headers):
@@ -174,10 +174,11 @@ def test_turning_notifications_on_never_returns_the_password(client):
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
 
 
-def test_the_site_must_accept_the_password(client):
+def test_a_saved_password_the_site_rejects_blocks_notifications(client, store):
     headers = login(client)
+    store.save_password(user_of(store, headers).id, "bad")  # as if the password was changed on the site
 
-    assert client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "password": "bad"}, headers=headers).status_code == 401
+    assert client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers).status_code == 401
     assert client.get("/api/v1/me/notifications", headers=headers).status_code == 404
 
 
@@ -253,3 +254,97 @@ def test_logout_deletes_the_saved_password(client, store):
     client.post("/api/v1/auth/logout", headers=headers)
 
     assert store.subscribers() == []
+
+
+PASSWORD_CHANGE = {"password": "better-pass", "confirm_password": "better-pass"}
+
+
+def fake_change_form(changed: bool):
+    """Stands in for the SSO change form, so these tests never reach the site."""
+
+    def change(scraper, password):
+        return {"changed": changed, "url": "https://sso.example.com/", "messages": [] if changed else ["rules"]}
+
+    return change
+
+
+def test_a_changed_password_replaces_the_saved_one_for_the_watcher(client, store, monkeypatch):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+    store.record_check(user_of(store, headers).id, "wrong_password")
+    monkeypatch.setattr(password_form, "change_password", fake_change_form(True))
+
+    response = client.post("/api/v1/me/password", json=PASSWORD_CHANGE, headers=headers)
+
+    assert response.status_code == 200 and response.json()["changed"] is True
+    assert [subscription.password for subscription in store.subscribers()] == ["better-pass"]
+    assert client.get("/api/v1/me/notifications", headers=headers).json()["status"] == "ok"
+
+
+def test_a_changed_password_is_saved_even_without_notifications(client, store, monkeypatch):
+    headers = login(client)
+    monkeypatch.setattr(password_form, "change_password", fake_change_form(True))
+
+    client.post("/api/v1/me/password", json=PASSWORD_CHANGE, headers=headers)
+
+    assert store.saved_password(user_of(store, headers).id) == "better-pass"
+    assert store.subscribers() == []
+
+
+def test_a_rejected_change_keeps_the_saved_password(client, store, monkeypatch):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+    monkeypatch.setattr(password_form, "change_password", fake_change_form(False))
+
+    response = client.post("/api/v1/me/password", json=PASSWORD_CHANGE, headers=headers)
+
+    assert response.json() == {"changed": False, "url": "https://sso.example.com/", "messages": ["rules"]}
+    assert store.saved_password(user_of(store, headers).id) == "good"
+
+
+def test_login_saves_the_password_encrypted(client, store):
+    headers = login(client)
+
+    assert store.saved_password(user_of(store, headers).id) == "good"
+    with store._connect() as db:
+        stored = db.execute("SELECT password_enc FROM users").fetchone()[0]
+    assert b"good" not in stored
+
+
+def test_notifications_use_the_saved_password(client, store):
+    headers = login(client)
+
+    response = client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+
+    assert response.status_code == 200
+    assert [subscription.password for subscription in store.subscribers()] == ["good"]
+
+
+def test_logging_in_again_saves_the_password_the_site_now_accepts(client, store):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+    user_id = user_of(store, headers).id
+    store.save_password(user_id, "bad")  # as if the password was changed on the site
+    assert client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers).status_code == 401
+
+    new_headers = login(client)
+
+    assert store.saved_password(user_id) == "good"
+    assert client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=new_headers).status_code == 200
+
+
+def test_notifications_need_a_saved_password(client, store):
+    headers = login(client)
+    with store._connect() as db:
+        db.execute("UPDATE users SET password_enc = NULL")
+
+    assert client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers).status_code == 422
+
+
+def test_turning_notifications_off_keeps_the_saved_password(client, store):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+
+    client.delete("/api/v1/me/notifications", headers=headers)
+
+    assert store.saved_password(user_of(store, headers).id) == "good"

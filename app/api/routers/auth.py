@@ -26,12 +26,13 @@ def login(
 ):
     """Sign in to the university site with the user's own account and return an API token.
 
-    The password is used once and is **not stored**; only the resulting session cookies are
-    kept, encrypted. Logging in again replaces the previous token.
+    The session cookies and the password are kept **encrypted**. The password lets change notifications sign in
+    later without asking for it again, and `POST /me/password` keeps it up to date. Logging in again replaces the
+    previous token and the saved password.
     """
     scraper = SiteScraper(settings, credentials.username)
     scraper.login(credentials.password)
-    token = store.upsert_login(credentials.username, dump_cookies(scraper.session.cookies))
+    token = store.upsert_login(credentials.username, dump_cookies(scraper.session.cookies), credentials.password)
     return {"token": token}
 
 
@@ -42,6 +43,6 @@ def login(
     responses=UNAUTHORIZED,
 )
 def logout(scraper: SiteScraper = Depends(current_scraper), store: UserStore = Depends(get_store)):
-    """Delete the caller's token and stored session cookies. A new login is needed afterwards."""
+    """Delete the caller's token, session cookies and saved password. A new login is needed afterwards."""
     store.delete(scraper.user.id)
     return {"ok": True}

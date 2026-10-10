@@ -20,8 +20,8 @@ pages, and returns structured data with English field names.
 
 ### Privacy and security
 
-- The site **password is not stored**, except for students who turn on change notifications. Then it is kept **encrypted**, with their email, watched fields, last results and Telegram chat, so the watcher can check their scores every 30 minutes. Turning notifications off deletes the password, email and results. Logging out deletes everything.
-- Only the portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
+- The site **password is stored**, **encrypted** (Fernet), from the login onward. Change notifications sign in with it, so students don't type it again. A successful `POST /api/v1/me/password` replaces it. Logging out deletes it. Turning notifications off keeps it.
+- The portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
 - API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again.
 - When the portal session expires the API answers `401` and the user logs in again.
 
@@ -41,8 +41,8 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
 | `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields, status of the last check |
-| `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them; the password is checked with the site |
-| `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved password |
+| `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them, with the password saved at login |
+| `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved results |
 | `GET` | `/api/v1/me/telegram` | ✔ | Whether a Telegram chat is connected |
 | `POST` | `/api/v1/me/telegram/link` | ✔ | Link that connects Telegram when opened and started (works once, 15 minutes) |
 | `DELETE` | `/api/v1/me/telegram` | ✔ | Disconnect Telegram |
@@ -59,7 +59,7 @@ The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows ke
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 
-`POST /api/v1/me/password` submits the change form on the university site with the new password, typed twice as `password` and `confirm_password`. The new password is not stored. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. Saved change notifications keep the old password, so save them again with `PUT /me/notifications` after a change.
+`POST /api/v1/me/password` submits the change form on the university site with the new password, typed twice as `password` and `confirm_password`. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
 
 `/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
@@ -67,10 +67,10 @@ Errors are returned as `{"detail": "..."}`:
 
 | Status | Meaning |
 |---|---|
-| `401` | Missing or invalid token, expired site session, or the site rejected a password (`PUT /me/notifications`) |
+| `401` | Missing or invalid token, expired site session, or the site rejected the saved password (`PUT /me/notifications`, then log in again) |
 | `404` | Unknown target, course or notice, no password form on the site, or notifications are off (`GET /me/notifications`) |
 | `409` | Disconnecting Telegram while notifications are on without an email |
-| `422` | Invalid notification settings, no email and no Telegram connected, or the two passwords differ (`POST /me/password`) |
+| `422` | Invalid notification settings, no email and no Telegram connected, no saved password (log in again), or the two passwords differ (`POST /me/password`) |
 | `502` | The university site could not be reached or failed |
 | `503` | Telegram is not set up on the server (`TELEGRAM_BOT_USERNAME` is missing) |
 
@@ -92,7 +92,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/m
 # 4. turn change notifications on (email is optional once Telegram is connected)
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   http://localhost:8000/api/v1/me/notifications \
-  -d '{"password": "your-site-password", "email": "student@example.com", "fields": ["final_score", "grade"]}'
+  -d '{"email": "student@example.com", "fields": ["final_score", "grade"]}'
 ```
 
 In Swagger UI, call `POST /api/v1/auth/login`, click **Authorize**, and paste the token.
@@ -103,7 +103,7 @@ Copy [.env.example](.env.example) to `.env`.
 
 | Variable | Required | Description |
 |---|---|---|
-| `APP_SECRET_KEY` | ✔ | Fernet key that encrypts stored cookies and notification passwords. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it stable: changing it makes stored sessions unreadable and users must log in again. |
+| `APP_SECRET_KEY` | ✔ | Fernet key that encrypts stored cookies and passwords. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it stable: changing it makes stored sessions unreadable and users must log in again. |
 | `BASE_DOMAIN` | ✔ | Parent domain shared by the login and dashboard hosts |
 | `LOGIN_URL` | ✔ | Portal login page |
 | `DASHBOARD_URL` | ✔ | Dashboard home page (must be on `BASE_DOMAIN`) |
@@ -151,7 +151,7 @@ database. Without it they are skipped. CI sets it.
 app/
   main.py            app factory: metadata, error handlers, router mounting under /api/v1
   config.py          environment configuration
-  db.py              PostgreSQL store (hashed tokens, encrypted cookies, notification settings and passwords)
+  db.py              PostgreSQL store (hashed tokens, encrypted cookies and passwords, notification settings)
   schemas.py         request/response models
   api/
     deps.py          settings, user store and per-request authenticated scraper
@@ -210,19 +210,21 @@ current results, so nothing old is announced.
 3. `GET /api/v1/me/telegram` returns `{"linked": true}` once it worked.
 
 The code works once and expires after 15 minutes. Then the student turns notifications on with
-`PUT /api/v1/me/notifications`, sending their site password, the fields to watch and, optionally, an email.
-An email, a connected Telegram, or both are accepted. The response includes:
+`PUT /api/v1/me/notifications`, sending the fields to watch and, optionally, an email. The password saved at login is
+used, so the student doesn't type it again. An email, a connected Telegram, or both are accepted. If the site rejects
+the saved password (for example after a change made on the site), the student logs in again, which saves the new one.
+The response includes:
 
 - `status`: `ok` (the last check worked), `wrong_password` (the site rejected the saved password; checks stop for
-  that student until they save settings again, so the watcher doesn't keep retrying and risk locking the account),
-  or `error` (the last check failed, usually because the site was down).
+  that student until they log in again, so the watcher doesn't keep retrying and risk locking
+  the account), or `error` (the last check failed, usually because the site was down).
 - `last_checked_at`: when the last check ran.
 - `telegram_linked`: whether a Telegram chat is connected.
 
 The frontend should show `wrong_password` and `error` to the student.
 
 **What is stored:** the site password, encrypted with `APP_SECRET_KEY`, plus the email, the fields, the last seen
-results and the Telegram chat id. Turning notifications off keeps the Telegram link. Disconnecting Telegram
+results and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
 (`DELETE /api/v1/me/telegram`) needs an email set first, so messages don't silently stop. Logging out deletes
 all of it. The watcher signs in on every check rather than reusing the session, because a portal session lasts
 too short a time.

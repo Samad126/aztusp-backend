@@ -57,13 +57,7 @@ class NotificationSettings(BaseModel):
 
 
 class NotificationsIn(NotificationSettings):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"password": "your-site-password", "email": "student@example.com", "fields": ["final_score", "grade"]}}
-    )
-
-    password: str = Field(
-        description="Site password. Stored encrypted so the watcher can sign in every check. Sent again whenever you save these settings; the site must accept it."
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"email": "student@example.com", "fields": ["final_score", "grade"]}})
 
 
 class NotificationsOut(NotificationSettings):
@@ -82,7 +76,7 @@ class NotificationsOut(NotificationSettings):
     telegram_linked: bool = Field(description="Whether a Telegram chat is connected (see `/me/telegram/link`).")
     status: Literal["ok", "wrong_password", "error"] = Field(
         description="`ok`: the last check worked. `wrong_password`: the site rejected the saved password, so checks are paused "
-        "until you save your settings again. `error`: the last check failed, usually because the site is down."
+        "until you log in again. `error`: the last check failed, usually because the site is down."
     )
     last_checked_at: datetime | None = Field(None, description="When the last check ran; `null` before the first one.")
 

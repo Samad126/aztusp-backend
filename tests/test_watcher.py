@@ -444,9 +444,9 @@ def store():
 
 @needs_database
 def test_notification_settings_round_trip_and_the_password_is_encrypted(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}"))
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
 
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]), "site-pass")
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
 
     saved = store.get_notifications(user.id)
     assert (saved.email, saved.fields, saved.status, saved.telegram_linked) == ("student@example.com", ["grade"], "ok", False)
@@ -458,14 +458,14 @@ def test_notification_settings_round_trip_and_the_password_is_encrypted(store):
         None,
     )
     with store._connect() as db:
-        stored = db.execute("SELECT password_enc FROM notification_settings").fetchone()[0]
+        stored = db.execute("SELECT password_enc FROM users").fetchone()[0]
     assert b"site-pass" not in stored
 
 
 @needs_database
 def test_a_connected_telegram_chat_is_used_for_notifications(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}"))
-    store.set_notifications(user.id, Notifications(None, ["grade"]), "site-pass")
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
+    store.set_notifications(user.id, Notifications(None, ["grade"]))
 
     store.set_telegram_chat(user.id, "42")
 
@@ -476,7 +476,7 @@ def test_a_connected_telegram_chat_is_used_for_notifications(store):
 
 @needs_database
 def test_link_codes_work_once_and_expire(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}"))
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
 
     code, _ = store.create_link_code(user.id)
     assert store.redeem_link_code(code) == user.id
@@ -490,8 +490,8 @@ def test_link_codes_work_once_and_expire(store):
 
 @needs_database
 def test_a_chat_belongs_to_one_account_at_a_time(store):
-    first = store.get_by_token(store.upsert_login("M1", "{}"))
-    second = store.get_by_token(store.upsert_login("M2", "{}"))
+    first = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
+    second = store.get_by_token(store.upsert_login("M2", "{}", "site-pass"))
 
     store.set_telegram_chat(first.id, "42")
     store.set_telegram_chat(second.id, "42")
@@ -502,20 +502,33 @@ def test_a_chat_belongs_to_one_account_at_a_time(store):
 
 @needs_database
 def test_a_wrong_password_status_clears_when_settings_are_saved_again(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}"))
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]), "old-pass")
+    user = store.get_by_token(store.upsert_login("M1", "{}", "old-pass"))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
 
     store.record_check(user.id, "wrong_password")
     assert store.get_notifications(user.id).status == "wrong_password"
 
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]), "new-pass")
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
     assert store.get_notifications(user.id).status == "ok"
 
 
 @needs_database
-def test_turning_notifications_off_deletes_the_password_and_results(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}"))
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]), "site-pass")
+def test_a_new_saved_password_clears_a_wrong_password_status(store):
+    user = store.get_by_token(store.upsert_login("M1", "{}", "old-pass"))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
+    store.record_check(user.id, "wrong_password")
+
+    store.save_password(user.id, "new-pass")
+
+    assert store.get_notifications(user.id).status == "ok"
+    assert store.saved_password(user.id) == "new-pass"
+    assert [subscription.password for subscription in store.subscribers()] == ["new-pass"]
+
+
+@needs_database
+def test_turning_notifications_off_keeps_the_password_and_deletes_the_results(store):
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
     store.save_snapshot(user.id, {"fields": ["grade"], "courses": []})
 
     store.delete_notifications(user.id)
@@ -523,12 +536,34 @@ def test_turning_notifications_off_deletes_the_password_and_results(store):
     assert store.get_notifications(user.id) is None
     assert store.load_snapshot(user.id) is None
     assert store.subscribers() == []
+    assert store.saved_password(user.id) == "site-pass"
+
+
+@needs_database
+def test_an_old_notification_password_moves_to_the_user_on_start(store):
+    """Databases from before the login password was stored kept the password per notification setting."""
+    user = store.get_by_token(store.upsert_login("M1", "{}", "unused"))
+    with store._connect() as db:
+        db.execute("ALTER TABLE notification_settings ADD COLUMN password_enc BYTEA")
+        db.execute("UPDATE users SET password_enc = NULL")
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
+    with store._connect() as db:
+        db.execute("UPDATE notification_settings SET password_enc = %s", (store.fernet.encrypt(b"old-pass"),))
+
+    store._create_schema()
+
+    assert store.saved_password(user.id) == "old-pass"
+    with store._connect() as db:
+        column = db.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name = 'notification_settings' AND column_name = 'password_enc'"
+        ).fetchone()
+    assert column is None
 
 
 @needs_database
 def test_logout_deletes_everything_stored_for_the_user(store):
-    user = store.get_by_token(store.upsert_login("M1", "{}"))
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]), "site-pass")
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
     store.set_telegram_chat(user.id, "42")
     store.save_snapshot(user.id, {"fields": ["grade"], "courses": []})
     store.create_link_code(user.id)

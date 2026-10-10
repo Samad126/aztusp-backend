@@ -20,21 +20,37 @@ SCHEMA = (
         site_username TEXT NOT NULL UNIQUE,
         token_hash TEXT NOT NULL UNIQUE,
         cookies_enc BYTEA,
+        password_enc BYTEA,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # Students who turned change notifications on. The password is kept encrypted so the watcher can sign in
-    # for each check. Everything here is deleted with the user (logout) or by turning notifications off.
+    # Databases created before the password was stored at login get the column here.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc BYTEA",
+    # Students who turned change notifications on. The watcher signs in with the password saved on the user.
+    # Everything here is deleted with the user (logout) or by turning notifications off.
     """
     CREATE TABLE IF NOT EXISTS notification_settings (
         user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         email TEXT,
         fields TEXT[] NOT NULL,
-        password_enc BYTEA NOT NULL,
         status TEXT NOT NULL DEFAULT 'ok',
         last_checked_at TIMESTAMPTZ,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+    """,
+    # Passwords used to be kept per notification setting. Copy them to the user and drop the old column. Runs on every
+    # start; does nothing once the column is gone.
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'notification_settings' AND column_name = 'password_enc'
+        ) THEN
+            UPDATE users u SET password_enc = n.password_enc FROM notification_settings n WHERE n.user_id = u.id;
+            ALTER TABLE notification_settings DROP COLUMN password_enc;
+        END IF;
+    END $$
     """,
     # Last seen results of each student, used to spot changes.
     """
@@ -93,8 +109,8 @@ def _hash(token: str) -> str:
 
 
 class UserStore:
-    """Users, their API tokens (stored hashed), their site session cookies (stored encrypted), the change
-    notifications of students who turned them on (password stored encrypted), and their Telegram chats."""
+    """Users, their API tokens (stored hashed), their site session cookies and site password (both stored encrypted),
+    the change notifications of students who turned them on, and their Telegram chats."""
 
     def __init__(self, database_url: str, secret_key: str):
         self.database_url = database_url
@@ -119,15 +135,26 @@ class UserStore:
         # `with` commits (or rolls back) and closes the connection.
         return psycopg.connect(self.database_url)
 
-    def upsert_login(self, site_username: str, cookies: str) -> str:
-        """Create or update the user after a successful site login; returns a fresh API token."""
+    def upsert_login(self, site_username: str, cookies: str, password: str) -> str:
+        """Create or update the user after a successful site login; returns a fresh API token.
+
+        The password is kept encrypted, so change notifications can sign in later without asking for it again.
+        """
         token = secrets.token_urlsafe(32)
-        encrypted = self.fernet.encrypt(cookies.encode())
+        encrypted_cookies = self.fernet.encrypt(cookies.encode())
+        encrypted_password = self.fernet.encrypt(password.encode())
         with self._connect() as db:
             db.execute(
-                "INSERT INTO users (site_username, token_hash, cookies_enc) VALUES (%s, %s, %s) "
-                "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, cookies_enc = excluded.cookies_enc",
-                (site_username, _hash(token), encrypted),
+                "INSERT INTO users (site_username, token_hash, cookies_enc, password_enc) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, cookies_enc = excluded.cookies_enc, "
+                "password_enc = excluded.password_enc",
+                (site_username, _hash(token), encrypted_cookies, encrypted_password),
+            )
+            # The login proves this password works, so a wrong-password status from an older one is cleared.
+            db.execute(
+                "UPDATE notification_settings SET status = 'ok', last_checked_at = NULL, updated_at = now() "
+                "WHERE user_id = (SELECT id FROM users WHERE site_username = %s)",
+                (site_username,),
             )
         return token
 
@@ -160,16 +187,41 @@ class UserStore:
         with self._connect() as db:
             db.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
-    def set_notifications(self, user_id: int, settings: Notifications, password: str) -> None:
-        """Turn notifications on or replace them. A new password clears a wrong-password status."""
+    def save_password(self, user_id: int, password: str) -> None:
+        """Replace the saved password after a site password change. Clears a wrong-password status, so the watcher signs
+        in again."""
         encrypted = self.fernet.encrypt(password.encode())
         with self._connect() as db:
+            db.execute("UPDATE users SET password_enc = %s WHERE id = %s", (encrypted, user_id))
             db.execute(
-                "INSERT INTO notification_settings (user_id, email, fields, password_enc) VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT (user_id) DO UPDATE SET email = excluded.email, fields = excluded.fields, "
-                "password_enc = excluded.password_enc, status = 'ok', last_checked_at = NULL, updated_at = now()",
-                (user_id, settings.email, settings.fields, encrypted),
+                "UPDATE notification_settings SET status = 'ok', last_checked_at = NULL, updated_at = now() WHERE user_id = %s",
+                (user_id,),
             )
+
+    def saved_password(self, user_id: int) -> str | None:
+        """The password saved at login (or by the last change), or None if there is none."""
+        with self._connect() as db:
+            row = db.execute("SELECT password_enc FROM users WHERE id = %s", (user_id,)).fetchone()
+        return self._decrypt_password(user_id, row[0]) if row else None
+
+    def set_notifications(self, user_id: int, settings: Notifications) -> None:
+        """Turn notifications on or replace them. Saving them again clears a wrong-password status."""
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO notification_settings (user_id, email, fields) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET email = excluded.email, fields = excluded.fields, "
+                "status = 'ok', last_checked_at = NULL, updated_at = now()",
+                (user_id, settings.email, settings.fields),
+            )
+
+    def _decrypt_password(self, user_id: int, encrypted: bytes | None) -> str | None:
+        if encrypted is None:
+            return None
+        try:
+            return self.fernet.decrypt(encrypted).decode()
+        except InvalidToken:
+            log.warning("Saved password of user %s could not be decrypted", user_id)
+            return None
 
     def get_notifications(self, user_id: int) -> Notifications | None:
         with self._connect() as db:
@@ -188,7 +240,7 @@ class UserStore:
             )
 
     def delete_notifications(self, user_id: int) -> None:
-        """Turn notifications off: removes the email, the saved password and the saved results. The Telegram link stays."""
+        """Turn notifications off: removes the email and the saved results. The saved password and the Telegram link stay."""
         with self._connect() as db:
             db.execute("DELETE FROM notification_settings WHERE user_id = %s", (user_id,))
             db.execute("DELETE FROM grade_snapshots WHERE user_id = %s", (user_id,))
@@ -197,16 +249,15 @@ class UserStore:
         """Every student with notifications on, with the password the watcher signs in with and their Telegram chat."""
         with self._connect() as db:
             rows = db.execute(
-                "SELECT u.id, u.site_username, n.password_enc, n.email, n.fields, n.status, n.last_checked_at, t.chat_id "
+                "SELECT u.id, u.site_username, u.password_enc, n.email, n.fields, n.status, n.last_checked_at, t.chat_id "
                 "FROM notification_settings n JOIN users u ON u.id = n.user_id "
                 "LEFT JOIN telegram_chats t ON t.user_id = u.id ORDER BY u.id"
             ).fetchall()
         subscriptions = []
         for user_id, site_username, password_enc, email, fields, status, checked_at, chat_id in rows:
-            try:
-                password = self.fernet.decrypt(password_enc).decode()
-            except InvalidToken:
-                log.warning("Saved password of user %s could not be decrypted, skipping", user_id)
+            password = self._decrypt_password(user_id, password_enc)
+            if password is None:
+                log.warning("User %s has no usable saved password, skipping", user_id)
                 continue
             notifications = Notifications(email, fields, status, checked_at, telegram_linked=chat_id is not None)
             subscriptions.append(Subscription(user_id, site_username, password, notifications, chat_id))

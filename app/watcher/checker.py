@@ -26,7 +26,7 @@ class Watcher:
         log.info("Checking %d student(s)", len(subscriptions))
         for subscription in subscriptions:
             if subscription.notifications.status == "wrong_password":
-                # Retrying a rejected password could lock the student's account. Checks resume once they save it again.
+                # Retrying a rejected password could lock the student's account. Checks resume once they log in again.
                 continue
             try:
                 self.check(subscription)
@@ -42,7 +42,7 @@ class Watcher:
             # Signs in on every check: the portal session lasts too short to reuse between checks.
             scraper.login(subscription.password)
         except BadCredentials:
-            log.warning("User %s: the site rejected the saved password, checks are paused until it is saved again", user_id)
+            log.warning("User %s: the site rejected the saved password, checks are paused until they log in again", user_id)
             self.store.record_check(user_id, "wrong_password")
             return
 
