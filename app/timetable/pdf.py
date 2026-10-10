@@ -4,8 +4,8 @@ Each PDF has one page per group. The group code is printed above the grid; the g
 and the weekdays down the side. A weekday's rows hold its sessions as cards: the teacher, the subject, a type letter and
 the room, one per line, teacher first.
 
-The university runs two weeks in turn, alt həftə and üst həftə. In a weekday's block, a card in the top half is alt
-həftə, a card in the bottom half is üst həftə, and a card that fills the whole block is in both weeks. The two weeks are
+The university runs two weeks in turn, alt həftə and üst həftə. In a weekday's block, a card in the top half is üst
+həftə, a card in the bottom half is alt həftə, and a card that fills the whole block is in both weeks. The two weeks are
 merged into one set of lessons: each card says which week it is in.
 
 The lessons come in two layouts, both from the same cards: `sessions` has one row per card, and `grid` is the university's
@@ -184,13 +184,13 @@ def _is_name(line: str) -> bool:
 
 
 def _weeks_of(box, block) -> tuple[str, ...]:
-    """Which weeks a card is in: the top half of its weekday's block is alt, the bottom half is ust."""
+    """Which weeks a card is in: the top half of its weekday's block is ust, the bottom half is alt."""
     top, bottom = box[1], box[3]
     block_top, block_bottom = block
     if top <= block_top + EDGE_POINTS and bottom >= block_bottom - EDGE_POINTS:
         return WEEKS
     middle = (block_top + block_bottom) / 2
-    return ("alt",) if (top + bottom) / 2 < middle else ("ust",)
+    return ("ust",) if (top + bottom) / 2 < middle else ("alt",)
 
 
 def _lessons(pages: list[tuple[list[str], list[_Card]]]) -> Lessons:

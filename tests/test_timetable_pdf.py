@@ -18,7 +18,7 @@ def grid(blocks, times=TIMES) -> Table:
     """The export's grid: the times across the top, and a weekday label down the side that spans its sub-rows.
 
     `blocks` is a list of (label, sub_rows); each sub-row holds the cell text under each time. A block with several
-    sub-rows is split into weeks: its top half is alt, its bottom half is ust.
+    sub-rows is split into weeks: its top half is ust, its bottom half is alt.
     """
     rows = [[""] + times]
     spans = []
@@ -99,8 +99,8 @@ def test_both_weeks_are_one_list_and_each_session_says_its_week():
     assert sessions_of(data, "M1") == [
         session("monday", "9:00-10:20", "Database", "M", "5-410", "Aslanov Ramin"),
         session("monday", "12:00-13:20", "Algorithms", "S", "3-12", "Verdiyev Turan"),
-        session("wednesday", "10:30-11:50", "Chemistry", "S", "2-01", "Kazimov Nail", week=LOWER),
-        session("wednesday", "12:00-13:20", "Physics", "M", "2-02", "Kazimov Nail", week=UPPER),
+        session("wednesday", "10:30-11:50", "Chemistry", "S", "2-01", "Kazimov Nail", week=UPPER),
+        session("wednesday", "12:00-13:20", "Physics", "M", "2-02", "Kazimov Nail", week=LOWER),
     ]
 
 
@@ -131,10 +131,10 @@ def test_cards_in_the_same_half_are_separate_sessions_in_order():
     )
 
     assert [(row["course"], row["week"]) for row in sessions_of(data, "M1")] == [
-        ("Bio", LOWER),
-        ("Art", LOWER),
-        ("Chem", UPPER),
-        ("Phys", UPPER),
+        ("Bio", UPPER),
+        ("Art", UPPER),
+        ("Chem", LOWER),
+        ("Phys", LOWER),
     ]
 
 
@@ -265,8 +265,8 @@ def test_grid_cards_say_which_week_they_are_in():
         )
     )
 
-    assert cards_in(data, "M1", "wednesday", "10:30-11:50") == [grid_card("Kazimov Nail", "Chemistry", "S", "2-01", week=LOWER)]
-    assert cards_in(data, "M1", "wednesday", "12:00-13:20") == [grid_card("Kazimov Nail", "Physics", "M", "2-02", week=UPPER)]
+    assert cards_in(data, "M1", "wednesday", "10:30-11:50") == [grid_card("Kazimov Nail", "Chemistry", "S", "2-01", week=UPPER)]
+    assert cards_in(data, "M1", "wednesday", "12:00-13:20") == [grid_card("Kazimov Nail", "Physics", "M", "2-02", week=LOWER)]
 
 
 def test_grid_cell_holds_every_card_of_its_lesson_in_order():
@@ -291,8 +291,8 @@ def test_grid_cell_holds_every_card_of_its_lesson_in_order():
     cell = cards_in(data, "M1", "friday", "9:00-10:20")
 
     assert [(item["course"], item["week"]) for item in cell] == [
-        ("Bio", LOWER),
-        ("Art", LOWER),
-        ("Chem", UPPER),
-        ("Phys", UPPER),
+        ("Bio", UPPER),
+        ("Art", UPPER),
+        ("Chem", LOWER),
+        ("Phys", LOWER),
     ]
