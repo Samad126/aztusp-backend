@@ -1,9 +1,9 @@
 """What `GET /me/schedule` returns: the university's timetable, or the channel's when the university has no lessons.
 
 Both answers are a `SchedulePage`. The channel's timetable is one block per group, with both weeks in it. It comes in two
-views: `list` has one row per session, and `grid` has one row per lesson time with a column per weekday, as the university
-shows it. Each session says which week it is in. `url` is the channel post the timetable came from. The university's own
-timetable is returned as it is, whatever the view.
+layouts, chosen with `view`: `list` fills `sections` with one row per session, and `grid` fills `grids` with the
+university's layout, a row per weekday and a cell per lesson time that lists its cards. `url` is the channel post the
+timetable came from. The university's own timetable is returned in `sections` whatever the view.
 """
 
 import logging
@@ -44,14 +44,20 @@ def read_timetable(scraper: SiteScraper, source: TimetableSource | None, view: S
         "tables": {},
         "pairs": {},
         "totals": {},
-        "sections": {"semesters": _blocks(found, view)},
+        "sections": {"semesters": [] if view == "grid" else _blocks(found)},
+        "grids": _grids(found) if view == "grid" else [],
         "fields": {},
     }
 
 
-def _blocks(found: list[channel.FoundGroup], view: ScheduleView) -> list[dict]:
-    """One block per group, with both weeks in its rows."""
-    return [{"title": f"{hit.group} Dərs cədvəli", "rows": hit.lessons.rows(view)} for hit in found]
+def _blocks(found: list[channel.FoundGroup]) -> list[dict]:
+    """One block per group, with both weeks in its rows; each row says which week it is in."""
+    return [{"title": f"{hit.group} Dərs cədvəli", "rows": hit.lessons.sessions} for hit in found]
+
+
+def _grids(found: list[channel.FoundGroup]) -> list[dict]:
+    """One grid per group, with both weeks in its cells; each card says which week it is in."""
+    return [{"title": f"{hit.group} Dərs cədvəli", **hit.lessons.grid} for hit in found]
 
 
 def _has_lessons(page: dict) -> bool:

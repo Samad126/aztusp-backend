@@ -5,11 +5,12 @@ and the weekdays down the side. A weekday's rows hold its sessions as cards: the
 the room, one per line, teacher first.
 
 The university runs two weeks in turn, alt həftə and üst həftə. In a weekday's block, a card in the top half is alt
-həftə, a card in the bottom half is üst həftə, and a card that fills the whole block is in every week. The two weeks are
-merged into one set of lessons: each session says which week it is in.
+həftə, a card in the bottom half is üst həftə, and a card that fills the whole block is in both weeks. The two weeks are
+merged into one set of lessons: each card says which week it is in.
 
-The lessons come in two views, both from the same cards: `sessions` has one row per card, and `grid` has one row per
-lesson time with a column per weekday, as the university shows its timetable.
+The lessons come in two layouts, both from the same cards: `sessions` has one row per card, and `grid` is the university's
+layout, one row per weekday with a cell per lesson time that lists the cards in it. Both use the same values: weekdays in
+English lowercase, the type as `lecture` or `lab`, and the week as `lower` (alt), `upper` (üst) or `both`.
 
 The export writes ə as '?', so a '?' is read as ə: as Ə where its word is capitalised (a name, the start of a subject, or a
 word in capitals). The export does not mark ş, ç, ı or ğ, so those come out as plain letters (masin for maşın) and stay
@@ -28,10 +29,9 @@ import pypdfium2 as pdfium
 
 log = logging.getLogger(__name__)
 
-LESSON = "Dərs"  # the grid's lesson-number column, as the university names it
 WEEKS = ("alt", "ust")  # alt həftə, üst həftə
-EVERY_WEEK = "hər həftə"
-WEEK_LABELS = {("alt",): "alt həftə", ("ust",): "üst həftə", WEEKS: EVERY_WEEK}  # what a card's weeks are called
+WEEK_VALUES = {("alt",): "lower", ("ust",): "upper", WEEKS: "both"}  # the week of a card, as the output names it
+DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday")  # the output's name for each weekday, in the export's order
 WEEKDAYS = ("Bazar ertesi", "Chershenbe akhshami", "Chershenbe", "Cume akhshami", "Cume")  # as the export prints them
 WEEKDAY_INDEX = {day.lower(): index for index, day in enumerate(WEEKDAYS)}
 TITLE_BAND_POINTS = 60  # the group code is printed in the top of the page, above the grid
@@ -40,23 +40,19 @@ TITLE = re.compile(r"^[A-Za-z][A-Za-z0-9\-]*\d[A-Za-z0-9\-]*$")  # e.g. M155a4
 TIME = re.compile(r"^\d{1,2}:\d{2}-\d{1,2}:\d{2}")
 ROOM_END = re.compile(r"\s*(?P<room>\d-[\w-]+)$")  # closes a card, e.g. "5-K-401"
 KIND_END = re.compile(r"\s*(?<!\w)(?P<kind>[MS])$")  # the type letter, which comes before the room or ends a cramped card
-KINDS = {"M": "Lecture", "S": "Lab"}  # what the type letter means
+KINDS = {"M": "lecture", "S": "lab"}  # what the type letter means
+CARD_KEYS = ("type", "week", "course", "teacher", "room")  # what a card holds in the grid
 
 
 @dataclass(frozen=True)
 class Lessons:
-    sessions: list[dict[str, str]]  # one row per session, in weekday and lesson order; `week` says which week it is in
-    grid: list[dict[str, str]]  # one row per lesson time, numbered from the first; one column per weekday
-
-    def rows(self, view: str) -> list[dict[str, str]]:
-        return self.grid if view == "grid" else self.sessions
+    sessions: list[dict[str, str]]  # the list layout: one row per session, in weekday and lesson order
+    grid: dict  # the grid layout: the lesson times, and a row per weekday (see `_grid`)
 
 
 class _Card(NamedTuple):
     order: tuple[int, int]  # weekday index, then the lesson's start in minutes
-    weeks: tuple[str, ...]  # the weeks the card is in
     session: dict[str, str]
-    text: str  # the card as printed, on one line
 
 
 class TimetablePdf:
@@ -73,14 +69,14 @@ class TimetablePdf:
         return _code(group) in self._pages
 
     def lessons(self, group: str) -> Lessons | None:
-        """The group's lessons from both weeks, in both views. None when the group has no lessons in this PDF.
+        """The group's lessons from both weeks, in both layouts. None when the group has no lessons in this PDF.
 
         A group can have more than one page with its code; their lessons are merged.
         """
         pages = []
         with pdfplumber.open(io.BytesIO(self._data)) as pdf:
             for index in self._pages.get(_code(group), []):
-                page = _grid(pdf.pages[index])
+                page = _page_lessons(pdf.pages[index])
                 if page is not None:
                     pages.append(page)
         return _lessons(pages) if pages else None
@@ -100,7 +96,7 @@ def _page_titles(data: bytes) -> list[str]:
     return titles
 
 
-def _grid(page) -> tuple[list[str], list[_Card]] | None:
+def _page_lessons(page) -> tuple[list[str], list[_Card]] | None:
     """The lesson times of a page's timetable, and its cards. None when the page has no cards."""
     for table in page.find_tables():
         raw = table.extract()
@@ -110,14 +106,13 @@ def _grid(page) -> tuple[list[str], list[_Card]] | None:
         times = {index: cell.split()[0] for index, cell in enumerate(cells[0]) if TIME.match(cell)}
         rows = table.rows
         cards = []
-        day = None  # (label as printed, weekday index) of the current block
+        day = None  # weekday index of the current block
         block = None  # top and bottom of the current block
         for r in range(1, len(rows)):
             if cells[r][0]:
-                index = WEEKDAY_INDEX.get(cells[r][0].lower())
-                if index is None:
+                day = WEEKDAY_INDEX.get(cells[r][0].lower())
+                if day is None:
                     log.warning("Unknown weekday %r in the timetable; its lessons are skipped", cells[r][0])
-                day = None if index is None else (cells[r][0], index)
                 label = rows[r].cells[0] or rows[r].bbox
                 block = (label[1], label[3])
             if day is None:
@@ -126,19 +121,17 @@ def _grid(page) -> tuple[list[str], list[_Card]] | None:
                 box = rows[r].cells[column]
                 if box is None or not cells[r][column]:
                     continue  # empty, or part of a card that starts in an earlier row
-                weeks = _weeks_of(box, block)
                 teacher, course, letter, room = _card(raw[r][column] or "")
                 session = {
-                    "day": day[0],
+                    "day": DAYS[day],
                     "time": time,
-                    "week": WEEK_LABELS[weeks],
+                    "week": WEEK_VALUES[_weeks_of(box, block)],
                     "course": course,
                     "type": KINDS.get(letter, ""),
                     "room": room,
                     "teacher": teacher,
                 }
-                text = " ".join(part for part in (teacher, course, letter, room) if part)
-                cards.append(_Card((day[1], _start_minutes(time)), weeks, session, text))
+                cards.append(_Card((day, _start_minutes(time)), session))
         if cards:
             return list(times.values()), cards
     return None
@@ -201,30 +194,35 @@ def _weeks_of(box, block) -> tuple[str, ...]:
 
 
 def _lessons(pages: list[tuple[list[str], list[_Card]]]) -> Lessons:
-    """The lessons of all the group's pages, in both views."""
+    """The lessons of all the group's pages, in both layouts."""
     slots = sorted({time for times, _ in pages for time in times}, key=_start_minutes)
     cards = sorted((card for _, page_cards in pages for card in page_cards), key=lambda card: card.order)
-    return Lessons(sessions=[card.session for card in cards], grid=_grid_rows(cards, slots))
+    return Lessons(sessions=[card.session for card in cards], grid=_grid(cards, slots))
 
 
-def _grid_rows(cards: list[_Card], slots: list[str]) -> list[dict[str, str]]:
-    """One row per lesson time, with the cards of each weekday in its column, as printed. Two cards in one cell are joined."""
-    rows = []
-    for number, time in enumerate(slots, start=1):
-        row = {LESSON: str(number)}
-        for index, day in enumerate(WEEKDAYS):
-            row[day] = " / ".join(
-                _grid_text(card) for card in cards if card.order[0] == index and card.session["time"] == time
-            )
-        rows.append(row)
-    return rows
-
-
-def _grid_text(card: _Card) -> str:
-    """The card as printed. A card in one week only starts with that week, so the merged grid says which week it is in."""
-    if card.weeks == WEEKS:
-        return card.text
-    return f"{WEEK_LABELS[card.weeks]}: {card.text}"
+def _grid(cards: list[_Card], slots: list[str]) -> dict:
+    """The university's layout: the lesson times across the top, and a row per weekday. Each cell lists the cards of that
+    lesson, from both weeks; a card says which week it is in."""
+    return {
+        "times": slots,
+        "days": [
+            {
+                "day": day,
+                "lessons": [
+                    {
+                        "time": time,
+                        "cards": [
+                            {key: card.session[key] for key in CARD_KEYS}
+                            for card in cards
+                            if card.order[0] == index and card.session["time"] == time
+                        ],
+                    }
+                    for time in slots
+                ],
+            }
+            for index, day in enumerate(DAYS)
+        ],
+    }
 
 
 def _start_minutes(time: str) -> int:

@@ -63,7 +63,7 @@ class FakePdf:
         return group == self.code
 
     def lessons(self, group: str):
-        return Lessons(sessions=[{"day": "Bazar ertesi", "course": group}], grid=[{"Dərs": "1", "Bazar ertesi": group}])
+        return Lessons(sessions=[{"day": "Bazar ertesi", "course": group}], grid={"times": [], "days": []})
 
 
 @pytest.fixture(autouse=True)

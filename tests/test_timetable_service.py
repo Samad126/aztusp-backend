@@ -37,10 +37,11 @@ UNI_PAGE = {
     "sections": {"semesters": [{"title": "2026 payiz Dərs cədvəli", "rows": [{"Dərs": "1", "Bazar ertəsi": "Math"}]}]},
 }
 SESSIONS = [
-    {"day": "Bazar ertesi", "time": "9:00-10:20", "week": "alt həftə", "course": "Chem", "type": "Lecture", "room": "1-01", "teacher": "Ali"},
-    {"day": "Cume", "time": "9:00-10:20", "week": "üst həftə", "course": "Physics", "type": "Lab", "room": "2-02", "teacher": "Ali"},
+    {"day": "monday", "time": "9:00-10:20", "week": "lower", "course": "Chem", "type": "lecture", "room": "1-01", "teacher": "Ali"},
+    {"day": "friday", "time": "9:00-10:20", "week": "upper", "course": "Physics", "type": "lab", "room": "2-02", "teacher": "Ali"},
 ]
-GRID = [{"Dərs": "1", "Bazar ertesi": "alt həftə: Chem", "Cume": "üst həftə: Physics"}]
+CARD = {"type": "lecture", "week": "both", "course": "Chem", "teacher": "Ali", "room": "1-01"}
+GRID = {"times": ["9:00-10:20"], "days": [{"day": "monday", "lessons": [{"time": "9:00-10:20", "cards": [CARD]}]}]}
 LESSONS = Lessons(sessions=SESSIONS, grid=GRID)
 
 
@@ -93,6 +94,7 @@ def test_fallback_has_the_university_shape(monkeypatch):
         "pairs": {},
         "totals": {},
         "sections": {"semesters": [{"title": "M2 Dərs cədvəli", "rows": SESSIONS}]},
+        "grids": [],
         "fields": {},
     }
     SchedulePage.model_validate(result)
@@ -140,14 +142,24 @@ def test_both_weeks_are_one_block(monkeypatch):
     SchedulePage.model_validate(result)
 
 
-def test_grid_view_returns_the_grid_rows_in_one_block(monkeypatch):
+def test_grid_view_fills_grids_and_leaves_sections_empty(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2())
 
     result = service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE, "grid")
 
-    assert result["sections"]["semesters"] == [{"title": "M2 Dərs cədvəli", "rows": GRID}]
+    assert result["sections"]["semesters"] == []
+    assert result["grids"] == [{"title": "M2 Dərs cədvəli", **GRID}]
     SchedulePage.model_validate(result)
+
+
+def test_list_view_leaves_grids_empty(monkeypatch):
+    monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
+    monkeypatch.setattr(channel, "search", lambda source, groups: found_m2())
+
+    result = service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE)
+
+    assert result["grids"] == []
 
 
 def test_fallback_links_a_private_channel_post(monkeypatch):
@@ -190,7 +202,9 @@ def test_schedule_endpoint_grid_view(api):
     response = api.get("/api/v1/me/schedule?view=grid")
 
     assert response.status_code == 200
-    assert response.json()["sections"]["semesters"] == [{"title": "M2 Dərs cədvəli", "rows": GRID}]
+    body = response.json()
+    assert body["sections"]["semesters"] == []
+    assert body["grids"] == [{"title": "M2 Dərs cədvəli", **GRID}]
 
 
 def test_schedule_endpoint_rejects_an_unknown_view(api):

@@ -40,7 +40,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/health` | – | Health check (unversioned) |
 | `GET` | `/api/v1/me/profile` | ✔ | Student profile |
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
-| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable (one block per semester in `sections.semesters`). Falls back to the channel's PDF when the university has none, with `?view=list` (default) or `?view=grid`, see [Timetable fallback](#timetable-fallback) |
+| `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable. The university's blocks are in `sections.semesters`. When the university has none, the channel's PDF is used: `?view=list` (default) fills `sections`, `?view=grid` fills `grids`. See [Timetable fallback](#timetable-fallback) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
 | `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
@@ -133,15 +133,18 @@ When the university site has no lessons for a student, `GET /me/schedule` search
 PDFs. It takes the student's group codes from their course names (`Math [M1]` gives `M1`), reads the newest PDFs for those
 groups, and returns them in one of two views, chosen with `?view=`:
 
-- `list` (default): one row per session (day, time, week, course, type, room, teacher).
-- `grid`: one row per lesson time, `Dərs` then one column per weekday, as the university's own timetable is laid out.
+- `list` (default) fills `sections`: one row per session (`day`, `time`, `week`, `course`, `type`, `room`, `teacher`), with the
+  same values as the grid: `day` is `monday` to `friday`, `type` is `lecture` or `lab`, and `week` is `upper`, `lower` or `both`.
+- `grid` fills `grids`: one grid per group, shaped for a card layout. `times` are the columns, and each `days[]` entry is a
+  weekday row (`monday` to `friday`) whose `lessons[]` has one cell per time, with that lesson's `cards`. A card has `type`
+  (`lecture` or `lab`), `week` (`upper` for üst həftə, `lower` for alt həftə, `both` when every week), `course`, `teacher`
+  and `room`.
 
-Both weeks are in one block per group, so a student sees one table. `week` is `alt həftə`, `üst həftə` or `hər həftə` (every
-week). In the grid, a card that is in one week only starts with that week's name; a card in every week does not. Both views
-come from the same PDF and keep its text as printed, except that the export's `?` is read as `ə` (or `Ə` at the start of a
-name). The export has lost ş, ç, ı and ğ, so those stay as plain letters, for example `masin`. `url` points at the channel post. The PDFs need one page per group,
-laid out like the aSc export: the group code above a grid with the times across the top and the weekdays down the side.
-The university's own timetable is returned unchanged, whatever the view.
+Both weeks are in one block per group, so a student sees one table. Both views come from the same PDF. The course, teacher and
+room keep the export's text, except that its `?` is read as `ə` (or `Ə` at the start of a name). The export has lost ş, ç, ı
+and ğ, so those stay as plain letters, for example `masin`. `url` points at the channel post. The PDFs need one page per
+group, laid out like the aSc export: the group code above a grid with the times across the top and the weekdays down the
+side. The university's own timetable is returned in `sections` whatever the view, so when `grids` is empty, show `sections`.
 
 | Variable | Description |
 |---|---|
@@ -200,16 +203,18 @@ app/
     routers/         auth, me (profile/scores/...), notifications, telegram, courses, system (health)
   scraping/
     client.py        portal login and logout, session handling, redirects
+    cookies.py       shares session cookies across portal subdomains
     parsing.py       HTML table/pair parsing and field-name translation
     targets.py       what to scrape (CSS selectors) and the field-name translations
     courses.py       course list and lecture plan scraping
+    notices.py       notice detail and attachment download
+    password_form.py password change on the university SSO site
   timetable/         fallback timetable from the channel's PDFs
     service.py       university timetable, or the channel's when the university has none
     channel.py       searches the channel's newest PDFs for the student's groups (Telethon)
-    pdf.py           reads one group's lessons from a timetable PDF (one page per group)
+    pdf.py           reads one group's lessons from a timetable PDF (one page per group), as list rows and as a grid
     config.py        channel and Telegram session settings
     login.py         one-time sign in that prints the session string
-    cookies.py       shares session cookies across portal subdomains
   watcher/           grade watcher (python -m app.watcher)
     __main__.py      the loop, --once and the test flags
     checker.py       one check per student: sign in, read scores, compare, notify

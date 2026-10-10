@@ -68,10 +68,11 @@ def read_schedule(
     view: timetable.ScheduleView = Query(
         "list",
         description=(
-            "How the channel's timetable is laid out, with both weeks in it. `list`: one row per session (`day`, `time`, "
-            "`week`, `course`, `type`, `room`, `teacher`). `grid`: one row per lesson time, `Dərs` then one column per weekday, "
-            "as the university shows it, where a card in one week only starts with that week's name. `week` is `alt həftə`, "
-            "`üst həftə`, or `hər həftə` when the lesson is every week. The university's own timetable is returned unchanged."
+            "How the channel's timetable is laid out, with both weeks in it. `list` fills `sections`: one row per session "
+            "(`day`, `time`, `week`, `course`, `type`, `room`, `teacher`). `grid` fills `grids`: one per group, a row per "
+            "weekday (`monday` to `friday`) and a cell per lesson time, the cards in each cell with `type` (`lecture` or `lab`), "
+            "`week` (`upper` for üst həftə, `lower` for alt həftə, `both` when every week), `course`, `teacher` and `room`. "
+            "The university's own timetable is returned in `sections` in both views."
         ),
     ),
     scraper: SiteScraper = Depends(current_scraper),

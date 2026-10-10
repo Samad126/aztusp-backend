@@ -229,11 +229,36 @@ class ScheduleSections(BaseModel):
         description=(
             "One block per semester shown on the page, in page order. `title` is the heading "
             "(e.g. `2026İl payiz Semestr Dərs cədvəli`); `rows` are timetable rows keyed by the column titles "
-            "(`Dərs`, then one column per weekday). In the channel fallback there is one block per group with both weeks in it: "
-            "`rows` are either one per session with `day`, `time`, `week`, `course`, `type`, `room` and `teacher` "
-            "(`view=list`), or the university's layout (`view=grid`). `rows` is empty when no lessons are scheduled."
+            "(`Dərs`, then one column per weekday). In the channel fallback there is one block per group with both weeks in it, "
+            "and one row per session with `day` (`monday` to `friday`), `time`, `week` (`upper`, `lower` or `both`), `course`, "
+            "`type` (`lecture` or `lab`), `room` and `teacher` (`view=list`). "
+            "Empty when `view=grid`, which fills `grids`. `rows` is empty when no lessons are scheduled."
         ),
     )
+
+
+class ScheduleCard(BaseModel):
+    type: str = Field(description="`lecture` (type M) or `lab` (type S); empty when the export does not say.")
+    week: str = Field(description="`upper` (üst həftə) or `lower` (alt həftə) when the lesson is in one week only; `both` when every week.")
+    course: str = Field(description="Subject, as the export prints it.")
+    teacher: str = Field(description="Teacher; empty when the export does not name one.")
+    room: str = Field(description="Room; empty when the export does not show it.")
+
+
+class ScheduleLesson(BaseModel):
+    time: str = Field(description="Lesson time, e.g. `9:00-10:20`.")
+    cards: list[ScheduleCard] = Field(description="The lessons in this slot, both weeks together; empty when there are none.")
+
+
+class ScheduleDay(BaseModel):
+    day: str = Field(description="English weekday in lowercase: `monday` to `friday`.")
+    lessons: list[ScheduleLesson] = Field(description="One per time in the grid's `times`, in the same order.")
+
+
+class ScheduleGrid(BaseModel):
+    title: str = Field(description="Heading, e.g. `M1 Dərs cədvəli`.")
+    times: list[str] = Field(description="The lesson times across the top, in order.")
+    days: list[ScheduleDay] = Field(description="One row per weekday, in order.")
 
 
 class SchedulePage(PageEnvelope):
@@ -241,6 +266,13 @@ class SchedulePage(PageEnvelope):
     pairs: dict[str, dict[str, str]] = Field(description="Always empty.")
     totals: dict[str, dict[str, str] | None] = Field(description="Always empty.")
     sections: ScheduleSections = Field(default_factory=ScheduleSections)
+    grids: list[ScheduleGrid] = Field(
+        [],
+        description=(
+            "The channel's timetable in the university's layout, one grid per group, when `view=grid`. "
+            "Empty in the other views."
+        ),
+    )
     fields: dict[str, str | None] = Field(description="Always empty.")
 
 

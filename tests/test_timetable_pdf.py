@@ -8,10 +8,10 @@ from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Table, T
 from app.timetable.pdf import TimetablePdf
 
 TIMES = ["9:00-10:20", "10:30-11:50", "12:00-13:20"]
-DAYS = ["Bazar ertesi", "Chershenbe akhshami", "Chershenbe", "Cume akhshami", "Cume"]
-ALT = "alt həftə"
-UST = "üst həftə"
-EVERY = "hər həftə"
+DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday"]  # the output's names
+LOWER = "lower"  # alt həftə
+UPPER = "upper"  # üst həftə
+BOTH = "both"  # every week
 
 
 def grid(blocks, times=TIMES) -> Table:
@@ -50,10 +50,10 @@ def card(teacher: str, course: str, kind: str = "M", room: str = "1-01") -> str:
     return f"{teacher}\n{course}\n{kind}\n{room}"
 
 
-TYPES = {"M": "Lecture", "S": "Lab"}  # the type letter on a card
+TYPES = {"M": "lecture", "S": "lab"}  # the type letter on a card
 
 
-def session(day, time, course, kind="M", room="1-01", teacher="Ali Veliyev", week=EVERY):
+def session(day, time, course, kind="M", room="1-01", teacher="Ali Veliyev", week=BOTH):
     return {
         "day": day,
         "time": time,
@@ -65,9 +65,8 @@ def session(day, time, course, kind="M", room="1-01", teacher="Ali Veliyev", wee
     }
 
 
-def grid_row(number: int, *cells: str) -> dict[str, str]:
-    """A grid row: the lesson number, then the cell of each weekday in DAYS order."""
-    return {"Dərs": str(number), **dict(zip(DAYS, cells, strict=True))}
+def grid_card(teacher: str, course: str, kind: str = "M", room: str = "1-01", week: str = BOTH) -> dict[str, str]:
+    return {"type": TYPES.get(kind, ""), "week": week, "course": course, "teacher": teacher, "room": room}
 
 
 def sessions_of(data: bytes, group: str):
@@ -76,6 +75,12 @@ def sessions_of(data: bytes, group: str):
 
 def grid_of(data: bytes, group: str):
     return TimetablePdf(data).lessons(group).grid
+
+
+def cards_in(data: bytes, group: str, day: str, time: str):
+    """The cards in one cell of the grid: the weekday's row, at the lesson time."""
+    row = next(row for row in grid_of(data, group)["days"] if row["day"] == day)
+    return next(lesson["cards"] for lesson in row["lessons"] if lesson["time"] == time)
 
 
 def test_both_weeks_are_one_list_and_each_session_says_its_week():
@@ -92,17 +97,17 @@ def test_both_weeks_are_one_list_and_each_session_says_its_week():
     )
 
     assert sessions_of(data, "M1") == [
-        session("Bazar ertesi", "9:00-10:20", "Database", "M", "5-410", "Aslanov Ramin"),
-        session("Bazar ertesi", "12:00-13:20", "Algorithms", "S", "3-12", "Verdiyev Turan"),
-        session("Chershenbe", "10:30-11:50", "Chemistry", "S", "2-01", "Kazimov Nail", week=ALT),
-        session("Chershenbe", "12:00-13:20", "Physics", "M", "2-02", "Kazimov Nail", week=UST),
+        session("monday", "9:00-10:20", "Database", "M", "5-410", "Aslanov Ramin"),
+        session("monday", "12:00-13:20", "Algorithms", "S", "3-12", "Verdiyev Turan"),
+        session("wednesday", "10:30-11:50", "Chemistry", "S", "2-01", "Kazimov Nail", week=LOWER),
+        session("wednesday", "12:00-13:20", "Physics", "M", "2-02", "Kazimov Nail", week=UPPER),
     ]
 
 
-def test_a_lesson_that_fills_its_day_is_in_every_week():
+def test_a_lesson_that_fills_its_day_is_in_both_weeks():
     data = timetable_pdf(("M1", grid([("Cume", [[card("Kazimov Nail", "Bio", "M", "2-02"), "", ""]])])))
 
-    assert sessions_of(data, "M1") == [session("Cume", "9:00-10:20", "Bio", "M", "2-02", "Kazimov Nail")]
+    assert sessions_of(data, "M1") == [session("friday", "9:00-10:20", "Bio", "M", "2-02", "Kazimov Nail")]
 
 
 def test_cards_in_the_same_half_are_separate_sessions_in_order():
@@ -126,10 +131,10 @@ def test_cards_in_the_same_half_are_separate_sessions_in_order():
     )
 
     assert [(row["course"], row["week"]) for row in sessions_of(data, "M1")] == [
-        ("Bio", ALT),
-        ("Art", ALT),
-        ("Chem", UST),
-        ("Phys", UST),
+        ("Bio", LOWER),
+        ("Art", LOWER),
+        ("Chem", UPPER),
+        ("Phys", UPPER),
     ]
 
 
@@ -137,7 +142,7 @@ def test_question_marks_are_read_as_schwa_and_other_text_is_kept():
     data = timetable_pdf(("M1", grid([("Bazar ertesi", [[card("N?sirov Ilqar", "Müasir proqram t?minati", "S", "3-401"), "", ""]])])))
 
     assert sessions_of(data, "M1")[0] == session(
-        "Bazar ertesi", "9:00-10:20", "Müasir proqram təminati", "S", "3-401", "Nəsirov Ilqar"
+        "monday", "9:00-10:20", "Müasir proqram təminati", "S", "3-401", "Nəsirov Ilqar"
     )
 
 
@@ -148,23 +153,23 @@ def test_schwa_is_capital_only_where_the_word_is_capitalised():
     )
 
     assert sessions_of(data, "M1")[0] == session(
-        "Bazar ertesi", "9:00-10:20", "Kriptoqrafiyanin əsaslari", "S", "2-01", "Əliyeva Nailə"
+        "monday", "9:00-10:20", "Kriptoqrafiyanin əsaslari", "S", "2-01", "Əliyeva Nailə"
     )
-    assert sessions_of(data, "M2")[0] == session("Bazar ertesi", "9:00-10:20", "Əsasli riyaziyyat", "M", "2-02", "GÖVHƏR Musa")
-    assert grid_of(data, "M1")[0]["Bazar ertesi"] == "Əliyeva Nailə Kriptoqrafiyanin əsaslari S 2-01"
+    assert sessions_of(data, "M2")[0] == session("monday", "9:00-10:20", "Əsasli riyaziyyat", "M", "2-02", "GÖVHƏR Musa")
+    assert cards_in(data, "M1", "monday", "9:00-10:20") == [grid_card("Əliyeva Nailə", "Kriptoqrafiyanin əsaslari", "S", "2-01")]
 
 
 def test_a_cramped_card_with_no_room_still_has_its_type_letter():
     data = timetable_pdf(("M1", grid([("Bazar ertesi", [[card("N?sirov Ilqar", "Müasir proqram", "S", ""), "", ""]])])))
 
-    assert sessions_of(data, "M1")[0] == session("Bazar ertesi", "9:00-10:20", "Müasir proqram", "S", "", "Nəsirov Ilqar")
+    assert sessions_of(data, "M1")[0] == session("monday", "9:00-10:20", "Müasir proqram", "S", "", "Nəsirov Ilqar")
 
 
 def test_a_card_without_a_teacher_line_keeps_its_group_codes_in_the_subject():
     joint = "M1/M2/\nM3\nRME Metodlar\nM\n5-K-401"
     data = timetable_pdf(("M1", grid([("Bazar ertesi", [[joint, "", ""]])])))
 
-    assert sessions_of(data, "M1")[0] == session("Bazar ertesi", "9:00-10:20", "M1/M2/ M3 RME Metodlar", "M", "5-K-401", "")
+    assert sessions_of(data, "M1")[0] == session("monday", "9:00-10:20", "M1/M2/ M3 RME Metodlar", "M", "5-K-401", "")
 
 
 def test_group_code_must_match_exactly_but_ignores_case():
@@ -210,11 +215,31 @@ def test_a_weekday_it_does_not_know_is_left_out():
 
     lessons = sessions_of(data, "M1")
 
-    assert [row["day"] for row in lessons] == ["Cume"]
+    assert [row["day"] for row in lessons] == ["friday"]
     assert "Lost" not in [row["course"] for row in lessons]
 
 
-def test_grid_has_a_row_for_every_lesson_time_and_a_column_for_every_weekday():
+def test_grid_has_a_row_per_weekday_in_english_and_a_cell_per_lesson_time():
+    data = timetable_pdf(
+        (
+            "M1",
+            grid(
+                [
+                    ("Bazar ertesi", [[card("Aslanov Ramin", "Database", "M", "5-410"), "", ""]]),
+                    ("Cume", [["", "", card("Ali Veliyev", "Bio", "S", "2-02")]]),
+                ]
+            ),
+        )
+    )
+    grid_layout = grid_of(data, "M1")
+
+    assert grid_layout["times"] == TIMES
+    assert [row["day"] for row in grid_layout["days"]] == DAYS
+    for row in grid_layout["days"]:
+        assert [lesson["time"] for lesson in row["lessons"]] == TIMES
+
+
+def test_grid_cell_holds_its_cards_with_type_week_teacher_and_room():
     data = timetable_pdf(
         (
             "M1",
@@ -227,14 +252,12 @@ def test_grid_has_a_row_for_every_lesson_time_and_a_column_for_every_weekday():
         )
     )
 
-    assert grid_of(data, "M1") == [
-        grid_row(1, "Aslanov Ramin Database M 5-410", "", "", "", ""),
-        grid_row(2, "", "", "", "", ""),
-        grid_row(3, "", "", "", "", "Ali Veliyev Bio S 2-02"),
-    ]
+    assert cards_in(data, "M1", "monday", "9:00-10:20") == [grid_card("Aslanov Ramin", "Database", "M", "5-410")]
+    assert cards_in(data, "M1", "friday", "12:00-13:20") == [grid_card("Ali Veliyev", "Bio", "S", "2-02")]
+    assert cards_in(data, "M1", "friday", "9:00-10:20") == []
 
 
-def test_grid_says_which_week_a_card_is_in_unless_it_is_in_every_week():
+def test_grid_cards_say_which_week_they_are_in():
     data = timetable_pdf(
         (
             "M1",
@@ -242,14 +265,11 @@ def test_grid_says_which_week_a_card_is_in_unless_it_is_in_every_week():
         )
     )
 
-    assert grid_of(data, "M1") == [
-        grid_row(1, "", "", "", "", ""),
-        grid_row(2, "", "", "alt həftə: Kazimov Nail Chemistry S 2-01", "", ""),
-        grid_row(3, "", "", "üst həftə: Kazimov Nail Physics M 2-02", "", ""),
-    ]
+    assert cards_in(data, "M1", "wednesday", "10:30-11:50") == [grid_card("Kazimov Nail", "Chemistry", "S", "2-01", week=LOWER)]
+    assert cards_in(data, "M1", "wednesday", "12:00-13:20") == [grid_card("Kazimov Nail", "Physics", "M", "2-02", week=UPPER)]
 
 
-def test_grid_cell_joins_its_cards_and_marks_each_week():
+def test_grid_cell_holds_every_card_of_its_lesson_in_order():
     data = timetable_pdf(
         (
             "M1",
@@ -268,8 +288,11 @@ def test_grid_cell_joins_its_cards_and_marks_each_week():
             ),
         )
     )
+    cell = cards_in(data, "M1", "friday", "9:00-10:20")
 
-    assert grid_of(data, "M1")[0]["Cume"] == (
-        "alt həftə: Ali Veliyev Bio M 1-01 / alt həftə: Ali Veliyev Art M 1-01 / "
-        "üst həftə: Ali Veliyev Chem M 1-01 / üst həftə: Ali Veliyev Phys M 1-01"
-    )
+    assert [(item["course"], item["week"]) for item in cell] == [
+        ("Bio", LOWER),
+        ("Art", LOWER),
+        ("Chem", UPPER),
+        ("Phys", UPPER),
+    ]
