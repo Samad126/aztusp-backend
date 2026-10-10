@@ -1,8 +1,12 @@
 """Request and response models for the HTTP API."""
 
+import re
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .watcher.config import DEFAULT_FIELDS, WATCHABLE_FIELDS
 
 
 class Detail(BaseModel):
@@ -11,7 +15,7 @@ class Detail(BaseModel):
 
 class Credentials(BaseModel):
     username: str = Field(description="Site username (the same one used on the student portal).", examples=["M0000000000"])
-    password: str = Field(description="Site password. Used once to sign in; never stored.")
+    password: str = Field(description="Site password. Used to sign in; this endpoint does not store it.")
 
 
 class TokenResponse(BaseModel):
@@ -20,6 +24,60 @@ class TokenResponse(BaseModel):
 
 class OkResponse(BaseModel):
     ok: bool = True
+
+
+EMAIL_ADDRESS = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class NotificationSettings(BaseModel):
+    email: str | None = Field(
+        None,
+        description="Address that result changes are mailed to. Optional when Telegram is connected.",
+        examples=["student@example.com"],
+    )
+    fields: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_FIELDS),
+        description=f"Result fields to watch, one or more of: {', '.join(WATCHABLE_FIELDS)}.",
+    )
+
+    @field_validator("email")
+    @classmethod
+    def email_looks_right(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        if not EMAIL_ADDRESS.match(value):
+            raise ValueError("must be an email address")
+        return value
+
+    @model_validator(mode="after")
+    def known_fields(self):
+        if not self.fields or any(name not in WATCHABLE_FIELDS for name in self.fields):
+            raise ValueError(f"fields must be one or more of: {', '.join(WATCHABLE_FIELDS)}")
+        return self
+
+
+class NotificationsIn(NotificationSettings):
+    password: str = Field(
+        description="Site password. Stored encrypted so the watcher can sign in every check. Sent again whenever you save these settings; the site must accept it."
+    )
+
+
+class NotificationsOut(NotificationSettings):
+    telegram_linked: bool = Field(description="Whether a Telegram chat is connected (see `/me/telegram/link`).")
+    status: Literal["ok", "wrong_password", "error"] = Field(
+        description="`ok`: the last check worked. `wrong_password`: the site rejected the saved password, so checks are paused "
+        "until you save your settings again. `error`: the last check failed, usually because the site is down."
+    )
+    last_checked_at: datetime | None = Field(None, description="When the last check ran; `null` before the first one.")
+
+
+class TelegramLink(BaseModel):
+    url: str = Field(description="Open this on a phone or desktop. Pressing Start in Telegram connects the chat to your account.")
+    expires_at: datetime = Field(description="The link works once and stops working at this time.")
+
+
+class TelegramStatus(BaseModel):
+    linked: bool = Field(description="Whether a Telegram chat is connected to your account.")
 
 
 class Section(BaseModel):

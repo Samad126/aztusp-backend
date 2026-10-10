@@ -1,6 +1,7 @@
 """API tests. Need a Postgres: set TEST_DATABASE_URL, otherwise they are skipped."""
 
 import os
+from dataclasses import replace
 
 import pytest
 from cryptography.fernet import Fernet
@@ -146,3 +147,109 @@ def test_docs_expose_only_new_names(client):
     assert {"/health", "/api/v1/auth/login", "/api/v1/me/scores", "/api/v1/courses"} <= paths
     assert not any(not p.startswith("/api/v1/") and p != "/health" for p in paths)
     assert not any("sync" in p for p in paths)
+
+
+
+NOTIFICATIONS = {"email": "student@example.com", "fields": ["grade"], "password": "good"}
+
+
+def user_of(store, headers):
+    return store.get_by_token(headers["Authorization"].removeprefix("Bearer "))
+
+
+def test_notifications_are_off_until_turned_on(client):
+    assert client.get("/api/v1/me/notifications", headers=login(client)).status_code == 404
+
+
+def test_turning_notifications_on_never_returns_the_password(client):
+    headers = login(client)
+
+    response = client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == "student@example.com" and body["fields"] == ["grade"]
+    assert body["status"] == "ok" and body["last_checked_at"] is None and body["telegram_linked"] is False
+    assert "password" not in body and "good" not in response.text
+    assert client.get("/api/v1/me/notifications", headers=headers).json() == body
+
+
+def test_the_site_must_accept_the_password(client):
+    headers = login(client)
+
+    assert client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "password": "bad"}, headers=headers).status_code == 401
+    assert client.get("/api/v1/me/notifications", headers=headers).status_code == 404
+
+
+def test_an_email_or_a_connected_telegram_is_required(client, store):
+    headers = login(client)
+    without_email = {**NOTIFICATIONS, "email": None}
+
+    assert client.put("/api/v1/me/notifications", json=without_email, headers=headers).status_code == 422
+
+    store.set_telegram_chat(user_of(store, headers).id, "42")
+    response = client.put("/api/v1/me/notifications", json=without_email, headers=headers)
+    assert response.status_code == 200 and response.json()["telegram_linked"] is True
+
+
+@pytest.mark.parametrize("change", [{"fields": ["nope"]}, {"fields": []}, {"email": "not-an-address"}])
+def test_invalid_notification_settings_are_rejected(client, change):
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, **change}, headers=login(client))
+
+    assert response.status_code == 422
+
+
+def test_turning_notifications_off(client):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+
+    assert client.delete("/api/v1/me/notifications", headers=headers).json() == {"ok": True}
+    assert client.get("/api/v1/me/notifications", headers=headers).status_code == 404
+
+
+def test_link_gives_a_one_time_telegram_url(client):
+    app.dependency_overrides[deps.get_settings] = lambda: replace(SETTINGS, telegram_bot_username="AztuGradeBot")
+
+    response = client.post("/api/v1/me/telegram/link", headers=login(client))
+
+    assert response.status_code == 200
+    assert response.json()["url"].startswith("https://t.me/AztuGradeBot?start=")
+
+
+def test_link_needs_the_bot_username_on_the_server(client):
+    assert client.post("/api/v1/me/telegram/link", headers=login(client)).status_code == 503
+
+
+def test_telegram_status_and_disconnect(client, store):
+    headers = login(client)
+    assert client.get("/api/v1/me/telegram", headers=headers).json() == {"linked": False}
+
+    store.set_telegram_chat(user_of(store, headers).id, "42")
+    assert client.get("/api/v1/me/telegram", headers=headers).json() == {"linked": True}
+
+    assert client.delete("/api/v1/me/telegram", headers=headers).json() == {"ok": True}
+    assert client.get("/api/v1/me/telegram", headers=headers).json() == {"linked": False}
+
+
+def test_disconnecting_telegram_needs_an_email_when_notifications_are_on(client, store):
+    headers = login(client)
+    store.set_telegram_chat(user_of(store, headers).id, "42")
+    client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "email": None}, headers=headers)
+
+    assert client.delete("/api/v1/me/telegram", headers=headers).status_code == 409
+
+
+def test_notification_routes_require_a_token(client):
+    assert client.put("/api/v1/me/notifications", json=NOTIFICATIONS).status_code == 401
+    assert client.get("/api/v1/me/notifications").status_code == 401
+    assert client.get("/api/v1/me/telegram").status_code == 401
+    assert client.post("/api/v1/me/telegram/link").status_code == 401
+
+
+def test_logout_deletes_the_saved_password(client, store):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+
+    client.post("/api/v1/auth/logout", headers=headers)
+
+    assert store.subscribers() == []

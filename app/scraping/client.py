@@ -32,6 +32,10 @@ class LoginError(RuntimeError):
     pass
 
 
+class BadCredentials(LoginError):
+    """The site rejected the username or password."""
+
+
 def dump_cookies(jar: RequestsCookieJar) -> str:
     return json.dumps(
         [
@@ -174,7 +178,7 @@ class SiteScraper:
 
         dashboard = self._request("GET", settings.dashboard_url)
         if self._looks_logged_out(dashboard):
-            raise LoginError("Incorrect username or password")
+            raise BadCredentials("Incorrect username or password")
 
         self._save_cookies()
         log.info("Logged in as %s", self.username)

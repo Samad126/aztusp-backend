@@ -27,5 +27,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Grade watcher: same image, runs the checker loop instead of the API. See README "Grade watcher".
+  watcher:
+    build: .
+    command: ["python", "-m", "app.watcher"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://aztusp:${POSTGRES_PASSWORD:-aztusp}@db:5432/aztusp
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

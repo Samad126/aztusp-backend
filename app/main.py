@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.deps import get_store
 from .api.errors import register_error_handlers
-from .api.routers import auth, courses, me, system
+from .api.routers import auth, courses, me, notifications, system, telegram
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -25,7 +25,7 @@ Lets each student sign in with **their own** university account and read their d
 
 ## Privacy
 
-* Your site password is used once to sign in and is **never stored**.
+* Your site password is used to sign in and is **not stored**, with one exception: if you turn on change notifications, it is kept **encrypted** so the watcher can sign in every 30 minutes and check your scores. Turning notifications off, or logging out, deletes it.
 * Only the resulting site session cookies are kept, **encrypted** in the database.
 * Your API token is stored as a SHA-256 hash, so it cannot be recovered. Logging in again issues a new token and invalidates the old one.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
@@ -35,6 +35,7 @@ TAGS = [
     {"name": "Auth", "description": "Sign in with a site account and manage the API token."},
     {"name": "My data", "description": "Your dashboard pages as JSON, scraped live on each request."},
     {"name": "Courses", "description": "Courses linked from the dashboard and their lecture plans."},
+    {"name": "Notifications", "description": "Email and Telegram messages when a watched result changes."},
     {"name": "System", "description": "Service status and metadata."},
 ]
 
@@ -76,6 +77,6 @@ app.include_router(system.router)
 
 # Current, documented API.
 v1 = APIRouter(prefix=API_PREFIX)
-for router in (auth.router, me.router, courses.router):
+for router in (auth.router, me.router, notifications.router, telegram.router, courses.router):
     v1.include_router(router)
 app.include_router(v1)

@@ -1,0 +1,63 @@
+from dataclasses import asdict
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from ...config import Settings
+from ...db import Notifications, User, UserStore
+from ...schemas import Detail, NotificationsIn, NotificationsOut, OkResponse
+from ...scraping.client import SiteScraper
+from ..deps import current_user, get_settings, get_store
+from ..errors import SITE_DOWN, UNAUTHORIZED
+
+router = APIRouter(prefix="/me/notifications", tags=["Notifications"])
+
+
+@router.get(
+    "",
+    summary="My change notifications",
+    response_model=NotificationsOut,
+    responses={**UNAUTHORIZED, 404: {"model": Detail, "description": "Change notifications are off."}},
+)
+def read_notifications(user: User = Depends(current_user), store: UserStore = Depends(get_store)):
+    """Where result changes are sent, which fields are watched, and how the last check went."""
+    saved = store.get_notifications(user.id)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="Change notifications are off")
+    return NotificationsOut(**asdict(saved))
+
+
+@router.put(
+    "",
+    summary="Turn change notifications on or update them",
+    response_model=NotificationsOut,
+    responses={**UNAUTHORIZED, **SITE_DOWN, 422: {"model": Detail, "description": "No email and no Telegram connected."}},
+)
+def save_notifications(
+    body: NotificationsIn,
+    user: User = Depends(current_user),
+    store: UserStore = Depends(get_store),
+    settings: Settings = Depends(get_settings),
+):
+    """Turn change notifications on, or replace them.
+
+    Needs an email, or a connected Telegram (`/me/telegram/link`), or both. The password is checked by signing in
+    to the site, then stored **encrypted** so the watcher can sign in every 30 minutes and read your scores. Save
+    it again after you change it on the site. Turning notifications off or logging out deletes it.
+    """
+    if body.email is None and store.get_telegram_chat(user.id) is None:
+        raise HTTPException(status_code=422, detail="Add an email or connect Telegram first")
+    SiteScraper(settings, user.site_username).login(body.password)  # 401 if the site rejects it
+    store.set_notifications(user.id, Notifications(email=body.email, fields=body.fields), body.password)
+    return NotificationsOut(**asdict(store.get_notifications(user.id)))
+
+
+@router.delete(
+    "",
+    summary="Turn change notifications off",
+    response_model=OkResponse,
+    responses=UNAUTHORIZED,
+)
+def delete_notifications(user: User = Depends(current_user), store: UserStore = Depends(get_store)):
+    """Stop watching: deletes the email, the saved password and the saved results. The Telegram link stays."""
+    store.delete_notifications(user.id)
+    return {"ok": True}

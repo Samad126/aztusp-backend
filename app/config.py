@@ -21,6 +21,7 @@ class Settings:
     username_field: str
     password_field: str
     timeout: float
+    telegram_bot_username: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -39,6 +40,7 @@ class Settings:
             username_field=os.getenv("USERNAME_FIELD", "username").strip(),
             password_field=os.getenv("PASSWORD_FIELD", "password").strip(),
             timeout=float(os.getenv("REQUEST_TIMEOUT", "20")),
+            telegram_bot_username=os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@") or None,
         )
 
         for url in (settings.login_url, settings.dashboard_url):

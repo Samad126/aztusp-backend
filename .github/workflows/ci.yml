@@ -61,8 +61,8 @@ jobs:
             git -C "$APP_DIR" fetch origin main
             git -C "$APP_DIR" reset --hard origin/main
 
-            # Rebuild the API only; leave the database container alone.
-            API_PORT=$API_PORT docker compose -f "$APP_DIR/docker-compose.yml" up -d --build api
+            # Rebuild the API and the grade watcher; leave the database container alone.
+            API_PORT=$API_PORT docker compose -f "$APP_DIR/docker-compose.yml" up -d --build api watcher
 
             # `up -d` returns once the container has started, not once it is ready,
             # so poll /health (40 x 5s). A flag and `break`, not `exit 0`, so ssh's
