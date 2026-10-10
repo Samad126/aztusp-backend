@@ -423,6 +423,13 @@ def test_a_telegram_only_student_is_messaged_on_telegram(portal, sent):
     assert [(email, chat) for email, chat, _, _ in sent] == [(None, "42")]
 
 
+def test_a_run_says_how_many_students_it_checked(portal, sent, caplog):
+    caplog.set_level("INFO")
+    Watcher(SETTINGS, WATCH, FakeStore([])).check_all()
+
+    assert "Checking 0 student(s)" in caplog.text
+
+
 DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 needs_database = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL not set")
 

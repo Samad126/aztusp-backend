@@ -22,7 +22,9 @@ class Watcher:
         self.store = store
 
     def check_all(self) -> None:
-        for subscription in self.store.subscribers():
+        subscriptions = self.store.subscribers()
+        log.info("Checking %d student(s)", len(subscriptions))
+        for subscription in subscriptions:
             if subscription.notifications.status == "wrong_password":
                 # Retrying a rejected password could lock the student's account. Checks resume once they save it again.
                 continue
