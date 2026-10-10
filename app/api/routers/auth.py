@@ -1,3 +1,6 @@
+import logging
+
+import requests
 from fastapi import APIRouter, Depends
 
 from ...config import Settings
@@ -6,6 +9,8 @@ from ...schemas import Credentials, Detail, OkResponse, TokenResponse
 from ...scraping.client import SiteScraper, dump_cookies
 from ..deps import current_scraper, get_settings, get_store
 from ..errors import SITE_DOWN, UNAUTHORIZED
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -38,11 +43,18 @@ def login(
 
 @router.post(
     "/logout",
-    summary="Log out and delete stored data",
+    summary="Log out of the university site and delete stored data",
     response_model=OkResponse,
     responses=UNAUTHORIZED,
 )
 def logout(scraper: SiteScraper = Depends(current_scraper), store: UserStore = Depends(get_store)):
-    """Delete the caller's token, session cookies and saved password. A new login is needed afterwards."""
+    """Log out of the university dashboard and SSO too, then delete the caller's token, session cookies and password.
+
+    The stored data is deleted even when the university site cannot be reached. A new login is needed afterwards.
+    """
+    try:
+        scraper.log_out()
+    except requests.RequestException as exc:
+        log.warning("Could not log %s out of the university site: %s", scraper.user.site_username, exc)
     store.delete(scraper.user.id)
     return {"ok": True}

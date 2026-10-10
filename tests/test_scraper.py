@@ -113,3 +113,16 @@ def test_wrong_password_reports_incorrect_credentials(monkeypatch):
 
     with pytest.raises(LoginError, match="^Incorrect username or password$"):
         scraper.login("wrong")
+
+
+def test_log_out_visits_the_dashboard_then_sso_logout_links(monkeypatch):
+    scraper = SiteScraper(make_settings(), "user")
+    visited = []
+    monkeypatch.setattr(scraper, "_request", lambda method, url, **kwargs: visited.append((method, url)))
+
+    scraper.log_out()
+
+    assert visited == [
+        ("GET", "https://d.example.com/logout_proc.php"),
+        ("GET", "https://login.example.com/Admin/Logout"),
+    ]

@@ -4,6 +4,7 @@ import os
 from dataclasses import replace
 
 import pytest
+import requests
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
@@ -38,6 +39,7 @@ def client(store, monkeypatch):
             raise LoginError("bad password")
 
     monkeypatch.setattr(SiteScraper, "login", fake_login)
+    monkeypatch.setattr(SiteScraper, "log_out", lambda self: None)
     monkeypatch.setattr(
         SiteScraper,
         "scrape",
@@ -133,6 +135,27 @@ def test_expired_site_session_is_401(client, monkeypatch):
 
 def test_logout_invalidates_token(client):
     headers = login(client)
+    assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
+    assert client.get("/api/v1/me/scores", headers=headers).status_code == 401
+
+
+def test_logout_also_logs_out_of_the_university_site(client, monkeypatch):
+    headers = login(client)
+    logged_out = []
+    monkeypatch.setattr(SiteScraper, "log_out", lambda self: logged_out.append(self.username))
+
+    assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
+    assert logged_out == ["u1"]
+
+
+def test_logout_deletes_the_token_when_the_university_site_is_down(client, monkeypatch):
+    headers = login(client)
+
+    def site_down(self):
+        raise requests.ConnectionError("site down")
+
+    monkeypatch.setattr(SiteScraper, "log_out", site_down)
+
     assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
     assert client.get("/api/v1/me/scores", headers=headers).status_code == 401
 

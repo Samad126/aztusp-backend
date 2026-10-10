@@ -27,6 +27,11 @@ PJAX_HEADERS = {
     "Referer": "https://gsap.aztu.edu.az/telebe/",
 }
 
+# The "Çıxış" (log out) links on the logged-in pages. The dashboard's ends its app session, the SSO admin
+# page's ends the sign-in.
+DASHBOARD_LOGOUT_PATH = "/logout_proc.php"
+SSO_LOGOUT_PATH = "/Admin/Logout"
+
 
 class LoginError(RuntimeError):
     pass
@@ -158,6 +163,15 @@ class SiteScraper:
             response = self._request("POST", url, data=data)
             self._save_cookies()
             return response
+
+    def log_out(self) -> None:
+        """Click the site's own log out links: the dashboard app first, then the SSO sign-in.
+
+        Nothing is saved afterwards, since the caller deletes the stored session. Network errors are raised.
+        """
+        with self._lock:
+            self._request("GET", urljoin(self.settings.dashboard_url, DASHBOARD_LOGOUT_PATH))
+            self._request("GET", urljoin(self.settings.login_url, SSO_LOGOUT_PATH))
 
     def _login(self) -> None:
         settings = self.settings

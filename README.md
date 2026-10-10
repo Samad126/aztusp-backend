@@ -33,7 +33,7 @@ raw OpenAPI document is at `/openapi.json`.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/api/v1/auth/login` | – | Sign in with a site account, returns a token |
-| `POST` | `/api/v1/auth/logout` | ✔ | Delete the token and stored session |
+| `POST` | `/api/v1/auth/logout` | ✔ | Log out of the university dashboard and SSO, then delete the token and stored session |
 | `GET` | `/health` | – | Health check (unversioned) |
 | `GET` | `/api/v1/me/profile` | ✔ | Student profile |
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
