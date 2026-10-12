@@ -1,1 +1,1 @@
-"""Grade watcher: mails and messages Telegram when a watched field on the scores page changes."""
+"""Watcher: mails and messages Telegram when a watched result or an absence mark changes."""

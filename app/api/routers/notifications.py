@@ -56,7 +56,7 @@ def save_notifications(
     if password is None:
         raise HTTPException(status_code=422, detail="No saved password: log in again first")
     SiteScraper(settings, user.site_username).login(password)  # 401 if the site rejects it
-    store.set_notifications(user.id, Notifications(email=body.email, fields=body.fields))
+    store.set_notifications(user.id, Notifications(email=body.email, fields=body.fields, absences=body.absences))
     return NotificationsOut(**asdict(store.get_notifications(user.id)))
 
 

@@ -225,6 +225,16 @@ def test_invalid_notification_settings_are_rejected(client, change):
     assert response.status_code == 422
 
 
+def test_absence_marks_can_be_watched_without_result_fields(client):
+    headers = login(client)
+
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "fields": [], "absences": True}, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["absences"] is True and response.json()["fields"] == []
+    assert client.get("/api/v1/me/notifications", headers=headers).json()["absences"] is True
+
+
 def test_turning_notifications_off(client):
     headers = login(client)
     client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)

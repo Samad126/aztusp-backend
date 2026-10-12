@@ -35,7 +35,15 @@ SCORES = TITLE + """<div id="secondary_content"><div class="container-fluid"><di
 <p class="text-danger" style="font-size: 15px;"><i><b>*Qeyd:</b> Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır.</i></p></div></div></div>"""
 
 
-def _attend(rows: str, own_id: str = "S1") -> str:
+LEGEND = '<tr><td>Davamiyyət : i/e</td><td>İştirak etmir: q/b</td><td colspan="2">Mühazirə : M</td></tr>'
+# The live page can leave a cell unclosed: the cells after it nest inside it and used to merge into one chip.
+UNCLOSED_LEGEND = (
+    "<tr><td>Davamiyyət : i/e</td><td>İştirak etmir: q/b</td><td>Daxil edilməyib : d/e"
+    '<td colspan="2">Mühazirə : M</td><td>Məşğələ/seminar : S</td><td>Laboratoriya : L</td></tr>'
+)
+
+
+def _attend(rows: str, own_id: str = "S1", legend: str = LEGEND) -> str:
     head = "".join(f'<th colspan="1">{i}</th>' for i in range(1, 4))
     blank = "<th></th>" * 3
     dates = "".join(f"<th><font>{d}</font></th>" for d in ("15.09", "22.09", ""))
@@ -44,7 +52,7 @@ def _attend(rows: str, own_id: str = "S1") -> str:
 <table id="op_list"><tbody>
 <tr><td>Fənnin adı<!-- x --></td><td>Saatların cəmi</td><td>Həftəlik dərs saatları</td><td>Kredit</td><td rowspan="2">2026.09.15 - 2026.12.31</td><td>Qrup</td><td>Müəllim</td></tr>
 <tr><td>Math</td><td>30</td><td></td><td>6</td><td>M1</td><td>Dr. X</td></tr>
-<tr><td>Davamiyyət : i/e</td><td>İştirak etmir: q/b</td><td colspan="2">Mühazirə : M</td></tr></tbody></table>
+{legend}</tbody></table>
 <table id="datatable-buttons"><thead><tr></tr>
 <tr><th rowspan="2">Nömrə</th><th rowspan="2">İdentifikator</th><th rowspan="2">Adı</th>{head}<th rowspan="38"></th><th>Bal</th><th>Davamiyyət faizi</th></tr>
 <tr>{blank}<th>0</th><th>100%</th></tr>
@@ -175,6 +183,19 @@ def test_attendance_returns_header_legend_sessions_and_every_student():
     ]
     assert (me["score"], me["percent"]) == ("2", "66")
     assert (other["student_id"], other["score"], other["percent"]) == ("S2", "0", "100")
+
+
+def test_legend_entries_stay_separate_when_a_cell_is_left_unclosed(monkeypatch):
+    monkeypatch.setitem(TAB_PAGES, "lecture_attend", _attend(MY_ROW + OTHER_ROW, legend=UNCLOSED_LEGEND))
+
+    assert courses.course_attendance(FakeScraper(), "7")["legend"] == {
+        "Davamiyyət": "i/e",
+        "İştirak etmir": "q/b",
+        "Daxil edilməyib": "d/e",
+        "Mühazirə": "M",
+        "Məşğələ/seminar": "S",
+        "Laboratoriya": "L",
+    }
 
 
 def test_plan_info_read_from_live_table():

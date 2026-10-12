@@ -39,7 +39,12 @@ class NotificationSettings(BaseModel):
     )
     fields: list[str] = Field(
         default_factory=lambda: list(DEFAULT_FIELDS),
-        description=f"Result fields to watch, one or more of: {', '.join(WATCHABLE_FIELDS)}.",
+        description=f"Result fields to watch, one or more of: {', '.join(WATCHABLE_FIELDS)}. Can be empty when `absences` is true.",
+    )
+    absences: bool = Field(
+        False,
+        description="Also watch absence marks in the attendance journal (Davamiyyət). A session newly marked absent, or an "
+        "absence the site changes to present, is sent.",
     )
 
     @field_validator("email")
@@ -53,13 +58,17 @@ class NotificationSettings(BaseModel):
 
     @model_validator(mode="after")
     def known_fields(self):
-        if not self.fields or any(name not in WATCHABLE_FIELDS for name in self.fields):
+        if any(name not in WATCHABLE_FIELDS for name in self.fields):
             raise ValueError(f"fields must be one or more of: {', '.join(WATCHABLE_FIELDS)}")
+        if not self.fields and not self.absences:
+            raise ValueError(f"fields must be one or more of: {', '.join(WATCHABLE_FIELDS)}, or absences must be true")
         return self
 
 
 class NotificationsIn(NotificationSettings):
-    model_config = ConfigDict(json_schema_extra={"example": {"email": "student@example.com", "fields": ["final_score", "grade"]}})
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"email": "student@example.com", "fields": ["final_score", "grade"], "absences": True}}
+    )
 
 
 class NotificationsOut(NotificationSettings):
@@ -68,6 +77,7 @@ class NotificationsOut(NotificationSettings):
             "example": {
                 "email": "student@example.com",
                 "fields": ["final_score", "grade"],
+                "absences": True,
                 "telegram_linked": True,
                 "status": "ok",
                 "last_checked_at": "2026-10-10T11:30:00Z",

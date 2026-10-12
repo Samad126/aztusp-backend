@@ -1,7 +1,7 @@
 import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, Comment, Tag
 
 from .client import PJAX_HEADERS, SiteScraper
 from .targets import FIELD_MAP
@@ -75,9 +75,13 @@ def course_params(scraper: SiteScraper, lec_open_idx: str) -> dict[str, str]:
     return _course_context(scraper, lec_open_idx)[0]
 
 
-def _course_context(scraper: SiteScraper, lec_open_idx: str) -> tuple[dict[str, str], str]:
-    """The shared tab params plus the course's display name (the dashboard link text, without the `[group]` suffix)."""
-    course = next((c for c in list_courses(scraper) if c["lec_open_idx"] == lec_open_idx), None)
+def _course_context(scraper: SiteScraper, lec_open_idx: str, listing: list[dict] | None = None) -> tuple[dict[str, str], str]:
+    """The shared tab params plus the course's display name (the dashboard link text, without the `[group]` suffix).
+
+    `listing` is an earlier `list_courses` result, so callers reading many courses fetch the dashboard once.
+    """
+    dashboard = list_courses(scraper) if listing is None else listing
+    course = next((c for c in dashboard if c["lec_open_idx"] == lec_open_idx), None)
     if course is None:
         raise CourseNotFound(f"No course with lec_open_idx={lec_open_idx}")
 
@@ -134,9 +138,11 @@ def _tab_url(scraper: SiteScraper, page: str, params: dict[str, str]) -> str:
     return urljoin(scraper.settings.dashboard_url, f"/studies/{page}.php") + "?" + urlencode(params)
 
 
-def _fetch_tab(scraper: SiteScraper, lec_open_idx: str, name: str) -> tuple[dict[str, str], Tag | BeautifulSoup, str | None, str]:
+def _fetch_tab(
+    scraper: SiteScraper, lec_open_idx: str, name: str, listing: list[dict] | None = None
+) -> tuple[dict[str, str], Tag | BeautifulSoup, str | None, str]:
     """Fetch one course tab: (ids, the tab's content, course heading, page url)."""
-    params, course = _course_context(scraper, lec_open_idx)
+    params, course = _course_context(scraper, lec_open_idx, listing)
     url = _tab_url(scraper, COURSE_PAGES[name], params)
     soup = scraper.fetch(url, headers=PJAX_HEADERS)
     heading = soup.select_one("h6.page-title")
@@ -238,9 +244,9 @@ def _find_score_table(content: Tag | BeautifulSoup) -> Tag | None:
     return tables[0] if tables else None
 
 
-def course_attendance(scraper: SiteScraper, lec_open_idx: str) -> dict:
+def course_attendance(scraper: SiteScraper, lec_open_idx: str, listing: list[dict] | None = None) -> dict:
     """The attendance table: class meetings, every student row with a mark per meeting, and the header values."""
-    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "attendance")
+    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "attendance", listing)
     result: dict = {"params": params, "course": course, "info": {}, "legend": {}, "header": {}, "sessions": [], "students": []}
 
     tables = _visible_tables(content)
@@ -306,22 +312,34 @@ def _attendance_info(table: Tag) -> tuple[dict[str, str], dict[str, str]]:
     """Course summary and the legend of mark codes.
 
     Row 1 holds the labels (one cell spans two rows and holds the dates), row 2 the values and
-    row 3 the legend ("Davamiyyət : i/e", "Mühazirə : M", ...).
+    row 3 the legend ("Davamiyyət : i/e", "Mühazirə : M", ...), one cell per entry.
     """
-    rows = [row.find_all(["td", "th"], recursive=False) for row in table.find_all("tr")]
+    rows = [_cells(row) for row in table.find_all("tr")]
     rows = [cells for cells in rows if cells]
     if len(rows) < 2:
         return {}, {}
     labels = [c for c in rows[0] if not c.get("rowspan")]
-    info = {ATTEND_INFO_MAP.get(_text(l), _text(l)): _text(v) for l, v in zip(labels, rows[1])}
+    info = {ATTEND_INFO_MAP.get(_own_text(l), _own_text(l)): _own_text(v) for l, v in zip(labels, rows[1])}
     if period := next((c for c in rows[0] if c.get("rowspan")), None):
-        info["period"] = _text(period)
+        info["period"] = _own_text(period)
     legend = {}
     for cell in rows[2] if len(rows) > 2 else []:
-        name, _, code = _text(cell).partition(":")
+        name, _, code = _own_text(cell).partition(":")
         if code:
             legend[name.strip()] = code.strip()
     return info, legend
+
+
+def _cells(row: Tag) -> list[Tag]:
+    """Every cell of the row, in order. An unclosed <td> makes the parser nest the cells after it inside it,
+    so they are not direct children of the row."""
+    return [cell for cell in row.find_all(["td", "th"]) if cell.find_parent("tr") is row]
+
+
+def _own_text(cell: Tag) -> str:
+    """The cell's text without the text of the cells nested inside it (see _cells)."""
+    texts = [s.strip() for s in cell.find_all(string=True) if s.find_parent(["td", "th"]) is cell and not isinstance(s, Comment)]
+    return _clean(" ".join(text for text in texts if text))
 
 
 def _cell_texts(head: dict[str, list[Tag]], label: str, count: int) -> list[str]:

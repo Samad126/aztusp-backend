@@ -16,7 +16,7 @@ pages, and returns structured data with English field names.
    to the portal and returns an API token, which lasts 1 day.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
-4. Students can also turn on change notifications, so they get a message when a watched result changes. See [Grade watcher](#grade-watcher).
+4. Students can also turn on change notifications, so they get a message when a watched result changes or an absence is marked. See [Grade watcher](#grade-watcher).
 5. `POST /api/v1/auth/logout` signs out of the university site too and ends the API session. Saved data is kept, so change notifications keep running.
 
 ### Privacy and security
@@ -46,7 +46,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
-| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields, status of the last check |
+| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields and absences, status of the last check |
 | `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them, with the password saved at login |
 | `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved results |
 | `GET` | `/api/v1/me/telegram` | ✔ | Whether a Telegram chat is connected |
@@ -215,12 +215,13 @@ app/
     pdf.py           reads one group's lessons from a timetable PDF (one page per group), as list rows and as a grid
     config.py        channel and Telegram session settings
     login.py         one-time sign in that prints the session string
-  watcher/           grade watcher (python -m app.watcher)
+  watcher/           grade and absence watcher (python -m app.watcher)
     __main__.py      the loop, --once and the test flags
-    checker.py       one check per student: sign in, read scores, compare, notify
+    checker.py       one check per student: sign in, read scores and absence marks, compare, notify
     notify.py        email (SMTP) and Telegram messages
     telegram.py      connects chats from /start <code> messages
     results.py       picks the watched fields and finds changes
+    absences.py      reads the student's marks in each attendance journal and finds new absences
     config.py        shared watcher settings
 tests/               pytest suite
 deploy/nginx/   nginx config for the API domain
@@ -255,7 +256,19 @@ as Docker starts at boot. Check that once with `sudo systemctl enable docker`, a
 `WATCH_INTERVAL_MINUTES` (default 30). For each student it signs in with their saved password, reads the scores
 table, and sends an email and/or a Telegram message when a watched field changes (by default `final_score` and
 `grade`). Each message names the course, the semester and the new result. The first check only records the
-current results, so nothing old is announced.
+current results, so nothing old is announced. The same check can also watch absence marks, see [Absence marks](#absence-marks).
+
+### Absence marks
+
+Set `"absences": true` in `PUT /api/v1/me/notifications` to also watch the attendance journal (Davamiyyət). The
+watcher reads the student's own mark for every class meeting in every course on the dashboard. It sends a message when
+a meeting is newly marked absent (`q/b`), including a meeting that was still blank before, or when the site changes an
+absence to present. Entering a meeting as present is not sent. Each message names the course and the meetings that
+changed, for example `Session 3 (22.09): absent (was not entered)`.
+
+`fields` may be empty when `absences` is true, so a student can watch absences alone. Turning a watch off forgets its
+saved marks, so turning it on again starts from a new baseline. A course whose page cannot be read this time keeps its
+last marks, so a failing page is not reported as absences disappearing or appearing.
 
 **Students never send a chat id.** Telegram is connected from the frontend:
 
@@ -279,7 +292,7 @@ The response includes:
 The frontend should show `wrong_password` and `error` to the student.
 
 **What is stored:** the site password, encrypted with `APP_SECRET_KEY`, plus the email, the fields, the last seen
-results and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
+results, the last seen absence marks and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
 (`DELETE /api/v1/me/telegram`) needs an email set first, so messages don't silently stop. Logging out keeps
 all of it. The watcher signs in on every check rather than reusing the session, because a portal session lasts
 too short a time.
