@@ -9,19 +9,31 @@ import pytest
 import requests
 from bs4 import BeautifulSoup
 from cryptography.fernet import Fernet
+from psycopg.types.json import Jsonb
+from pydantic import ValidationError
 
 from app.config import ConfigError, Settings
 from app.db import Notifications, Subscription, UserStore
-from app.schemas import NotificationSettings
+from app.schemas import NotificationsIn, NotificationsOut
 from app.scraping.client import BadCredentials, SiteScraper
 from app.scraping.targets import TARGETS_BY_NAME
 from app.watcher import absences, checker
 from app.watcher import notify as notify_module
 from app.watcher.absences import AbsenceChange, find_absence_changes, format_absence_message, take_absence_snapshot
 from app.watcher.checker import Watcher
-from app.watcher.config import SmtpSettings, WatcherSettings
+from app.watcher.config import SmtpSettings, WatcherSettings, watched_fields
 from app.watcher.notify import NotifyError, format_message, send_email, send_telegram
 from app.watcher.results import Change, find_changes, take_snapshot
+from app.watcher.tabs import (
+    ScoreChange,
+    WorkChange,
+    find_score_changes,
+    find_work_changes,
+    format_score_message,
+    format_work_message,
+    take_score_snapshot,
+    take_work_snapshot,
+)
 
 FIELDS = ("final_score", "grade")
 SEMESTER = "2026 Tədris ili payiz Semestr"
@@ -250,7 +262,7 @@ class FakeStore:
     def __init__(self, subscriptions):
         self.subscriptions = subscriptions
         self.snapshots = {}
-        self.absence_snapshots = {}
+        self.course_snapshots = {}
         self.statuses = {}
 
     def subscribers(self):
@@ -266,20 +278,37 @@ class FakeStore:
     def save_snapshot(self, user_id, data):
         self.snapshots[user_id] = data
 
-    def load_absence_snapshot(self, user_id):
-        return self.absence_snapshots.get(user_id)
+    def load_course_snapshot(self, user_id, watch):
+        return self.course_snapshots.get((user_id, watch))
 
-    def save_absence_snapshot(self, user_id, data):
-        self.absence_snapshots[user_id] = data
+    def save_course_snapshot(self, user_id, watch, data):
+        self.course_snapshots[(user_id, watch)] = data
 
     def record_check(self, user_id, status):
         self.statuses[user_id] = status
 
 
 def subscription(
-    user_id, username="M1", password="pw", fields=FIELDS, status="ok", email="student@example.com", chat="42", absences=False
+    user_id,
+    username="M1",
+    password="pw",
+    fields=FIELDS,
+    status="ok",
+    email="student@example.com",
+    chat="42",
+    absences=False,
+    individual_work=False,
+    course_scores=False,
 ):
-    notifications = Notifications(email, list(fields), status, telegram_linked=chat is not None, absences=absences)
+    notifications = Notifications(
+        email,
+        list(fields),
+        status,
+        telegram_linked=chat is not None,
+        absences=absences,
+        individual_work=individual_work,
+        course_scores=course_scores,
+    )
     return Subscription(user_id, username, password, notifications, chat)
 
 
@@ -570,7 +599,7 @@ def test_first_absence_check_saves_the_marks_without_notifying(portal, campus, s
     Watcher(SETTINGS, WATCH, store).check_all()
 
     assert sent == []
-    assert store.absence_snapshots[1]["courses"][0]["sessions"] == [{"number": "1", "date": "15.09", "mark": "absent"}]
+    assert store.course_snapshots[(1, "absences")]["courses"][0]["sessions"] == [{"number": "1", "date": "15.09", "mark": "absent"}]
     assert store.statuses[1] == "ok"
 
 
@@ -622,9 +651,213 @@ def test_an_unreadable_course_is_not_reported_as_its_absences_going_or_coming_ba
 
 
 def test_absence_watch_can_be_on_without_any_result_field():
-    assert NotificationSettings(email=None, fields=[], absences=True).absences is True
-    with pytest.raises(ValueError):
-        NotificationSettings(email=None, fields=[])
+    assert NotificationsIn(fields=[], absences=True).fields == []
+    with pytest.raises(ValidationError, match="choose something to watch"):
+        NotificationsIn(fields=[])
+
+
+def test_final_score_and_grade_are_always_watched_together():
+    assert NotificationsIn(fields=["grade"]).fields == ["final_score", "grade"]
+    assert NotificationsIn(fields=["final_score"]).fields == ["final_score", "grade"]
+    assert NotificationsIn(fields=["retake", "grade"]).fields == ["final_score", "grade", "retake"]
+
+
+@pytest.mark.parametrize("name", ["course_type", "credits", "nope"])
+def test_fields_that_are_not_offered_are_refused(name):
+    with pytest.raises(ValidationError, match="fields must be from"):
+        NotificationsIn(fields=[name])
+
+
+def test_settings_saved_before_a_field_was_removed_still_read_back():
+    saved = NotificationsOut(email=None, fields=["course_type", "credits"], telegram_linked=True, status="ok")
+
+    assert saved.fields == []
+
+
+def work(task_type="Essay", end="27.10.2026", id="5", number="1", **extra):
+    """An individual work as the Qiymətləndirmə tab reads it. Without an id, the row is identified by its content."""
+    row = {"number": number, "task_type": task_type, "evaluation": "10", "subject": "Lecture 3", "start_date": "20.10.2026", "end_date": end, **extra}
+    return {**row, "id": id} if id else row
+
+
+def component(name, maximum, score):
+    return {"name": name, "max": maximum, "score": score}
+
+
+@pytest.fixture
+def course_tabs(monkeypatch):
+    """Fake individual work and score pages, per site username and course: `course_tabs.work["M1"]["7"]` and
+    `course_tabs.scores["M1"]["7"]`. A course without a page has an empty tab; an exception in place of a page is raised."""
+    pages = SimpleNamespace(work={}, scores={})
+
+    def read(page):
+        if isinstance(page, Exception):
+            raise page
+        return page
+
+    def items(scraper, idx, name, listing=None):
+        return read(pages.work.get(scraper.username, {}).get(idx, {"course": None, "items": []}))
+
+    def scores(scraper, idx, listing=None):
+        return read(pages.scores.get(scraper.username, {}).get(idx, {"course": None, "components": [], "total": None}))
+
+    monkeypatch.setattr(absences.courses, "list_courses", lambda scraper: DASHBOARD)
+    monkeypatch.setattr(absences.courses, "course_items", items)
+    monkeypatch.setattr(absences.courses, "course_scores", scores)
+    return pages
+
+
+def test_watched_fields_keep_the_pair_together_and_drop_retired_names():
+    assert watched_fields(("course_type", "credits")) == []
+    assert watched_fields(("grade",)) == ["final_score", "grade"]
+    assert watched_fields(("retake", "credits", "final_score")) == ["final_score", "grade", "retake"]
+
+
+def test_work_snapshot_lists_every_work_of_each_course(course_tabs):
+    course_tabs.work["M1"] = {"7": {"course": "Math", "items": [work()]}, "8": {"course": "Physics", "items": []}}
+
+    assert take_work_snapshot(SimpleNamespace(username="M1"), []) == [
+        {"lec_open_idx": "7", "course": "Math", "works": [work()]},
+        {"lec_open_idx": "8", "course": "Physics", "works": []},
+    ]
+
+
+def test_new_and_changed_work_are_reported_and_unchanged_work_is_not():
+    previous = [{"lec_open_idx": "7", "course": "Math", "works": [work(id="5")]}]
+    current = [{"lec_open_idx": "7", "course": "Math", "works": [work(id="5", end="03.11.2026"), work(id="6", task_type="Report", number="2")]}]
+
+    changes = find_work_changes(previous, current)
+
+    assert [(change.changed, change.work["id"]) for change in changes] == [({"end_date": ("27.10.2026", "03.11.2026")}, "5"), (None, "6")]
+    assert find_work_changes(current, current) == []
+
+
+def test_a_work_without_an_id_is_matched_by_its_content_not_its_row_number():
+    previous = [{"lec_open_idx": "7", "course": "Math", "works": [work(id=None, number="1")]}]
+
+    renumbered = [{"lec_open_idx": "7", "course": "Math", "works": [work(id=None, number="2")]}]
+    assert find_work_changes(previous, renumbered) == []
+
+    added_above = [{"lec_open_idx": "7", "course": "Math", "works": [work("Report", id=None, number="1"), work(id=None, number="2")]}]
+    assert [change.work["task_type"] for change in find_work_changes(previous, added_above)] == ["Report"]
+
+
+def test_a_course_seen_for_the_first_time_is_recorded_not_announced():
+    known = [{"lec_open_idx": "7", "course": "Math", "works": []}]
+    current = [{"lec_open_idx": "7", "course": "Math", "works": [work()]}, {"lec_open_idx": "8", "course": "Physics", "works": [work()]}]
+
+    assert [change.course for change in find_work_changes(known, current)] == ["Math"]
+    assert find_work_changes([], current) == []
+    assert find_score_changes([], [{"lec_open_idx": "7", "course": "Math", "components": [component("a", "10", "5")], "total": "5"}]) == []
+    assert find_absence_changes([], [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "absent"}]}]) == []
+
+
+def test_a_work_message_names_each_new_and_changed_work():
+    changes = [
+        WorkChange("Math", work(), None),
+        WorkChange("Math", work(end="03.11.2026"), {"end_date": ("27.10.2026", "03.11.2026")}),
+    ]
+
+    subject, body = format_work_message(changes)
+
+    assert subject == "AZTUSP: individual work updated for Math"
+    assert body == (
+        "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
+        "Changed work\n  End: 03.11.2026 (was 27.10.2026)"
+    )
+
+
+def test_a_course_that_cannot_be_read_keeps_its_work(course_tabs):
+    last = [{"lec_open_idx": "7", "course": "Math", "works": [work()]}]
+    course_tabs.work["M1"] = {"7": requests.ConnectionError("portal slow")}
+
+    # Course 7 keeps its last entry; course 8 has no page here, so it is read as an empty tab.
+    assert take_work_snapshot(SimpleNamespace(username="M1"), last) == [last[0], {"lec_open_idx": "8", "course": "Physics [M1]", "works": []}]
+
+
+def test_score_snapshot_keeps_each_component_and_the_total(course_tabs):
+    course_tabs.scores["M1"] = {"7": {"course": "Math", "components": [component("sərbəst iş", "10", "5")], "total": "5"}}
+
+    assert take_score_snapshot(SimpleNamespace(username="M1"), []) == [
+        {"lec_open_idx": "7", "course": "Math", "components": [component("sərbəst iş", "10", "5")], "total": "5"},
+        {"lec_open_idx": "8", "course": "Physics [M1]", "components": [], "total": None},
+    ]
+
+
+def test_changed_scores_and_total_are_reported_but_a_score_that_disappears_is_not():
+    previous = [{"lec_open_idx": "7", "course": "Math", "components": [component("sərbəst iş", "10", "5"), component("Davamiyyət", None, "2")], "total": "7"}]
+    current = [
+        {
+            "lec_open_idx": "7",
+            "course": "Math",
+            "components": [component("sərbəst iş", "10", "7"), component("Məşğələ", "30", "12"), component("Davamiyyət", None, None)],
+            "total": "9",
+        }
+    ]
+
+    changes = find_score_changes(previous, current)
+
+    assert [(c.name, c.maximum, c.old, c.new) for c in changes] == [
+        ("sərbəst iş", "10", "5", "7"),
+        ("Məşğələ", "30", None, "12"),
+        ("Total", None, "7", "9"),
+    ]
+
+
+def test_a_score_that_was_empty_and_now_shows_zero_is_reported():
+    empty = [{"lec_open_idx": "7", "course": "Math", "components": [component("Davamiyyət", None, None)], "total": None}]
+    zero = [{"lec_open_idx": "7", "course": "Math", "components": [component("Davamiyyət", None, "0")], "total": None}]
+
+    assert find_score_changes(empty, zero) == [ScoreChange("Math", "Davamiyyət", None, None, "0")]
+    assert format_score_message(find_score_changes(empty, zero))[1] == "Course: Math\nDavamiyyət: 0"
+    assert find_score_changes(empty, empty) == []
+
+
+def test_a_score_message_names_the_course_and_each_score_that_changed():
+    changes = [ScoreChange("Math", "sərbəst iş", "10", "5", "7"), ScoreChange("Math", "Məşğələ", "30", None, "12"), ScoreChange("Math", "Total", None, "7", "9")]
+
+    subject, body = format_score_message(changes)
+
+    assert subject == "AZTUSP: course scores updated for Math"
+    assert body == "Course: Math\nsərbəst iş (of 10): 7 (was 5)\nMəşğələ (of 30): 12\nTotal: 9 (was 7)"
+
+
+def test_a_new_individual_work_goes_to_that_students_channels(portal, course_tabs, sent):
+    course_tabs.work["M1"] = {"7": {"course": "Math", "items": []}, "8": {"course": "Physics", "items": []}}
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), individual_work=True)]))
+    watcher.check_all()
+
+    course_tabs.work["M1"]["7"] = {"course": "Math", "items": [work()]}
+    watcher.check_all()
+
+    assert sent == [
+        (
+            "student@example.com",
+            "42",
+            "AZTUSP: individual work updated for Math",
+            "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026",
+        )
+    ]
+
+
+def test_a_changed_course_score_goes_to_that_students_channels(portal, course_tabs, sent):
+    course_tabs.scores["M1"] = {"7": {"course": "Math", "components": [component("sərbəst iş", "10", "5")], "total": "5"}, "8": {"course": "Physics", "components": [], "total": None}}
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), course_scores=True)]))
+    watcher.check_all()
+
+    course_tabs.scores["M1"]["7"] = {"course": "Math", "components": [component("sərbəst iş", "10", "7")], "total": "7"}
+    watcher.check_all()
+
+    assert [(subject, body) for _, _, subject, body in sent] == [
+        ("AZTUSP: course scores updated for Math", "Course: Math\nsərbəst iş (of 10): 7 (was 5)\nTotal: 7 (was 5)")
+    ]
+
+
+def test_a_student_with_nothing_left_to_watch_is_not_signed_in(portal, sent):
+    Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=("course_type", "credits"))])).check_all()
+
+    assert portal.logins == []
+    assert sent == []
 
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -737,20 +970,46 @@ def test_turning_notifications_off_keeps_the_password_and_deletes_the_results(st
 
 
 @needs_database
-def test_absence_watch_is_saved_and_turning_it_off_forgets_its_marks(store):
+@needs_database
+def test_course_watches_are_saved_and_turning_one_off_forgets_only_its_results(store):
     user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], absences=True))
-    store.save_absence_snapshot(user.id, {"courses": []})
+    everything = Notifications("student@example.com", ["grade"], absences=True, individual_work=True, course_scores=True)
+    store.set_notifications(user.id, everything)
+    for watch in ("absences", "work", "scores"):
+        store.save_course_snapshot(user.id, watch, {"courses": []})
+    store.save_snapshot(user.id, {"fields": ["final_score", "grade"], "courses": []})
 
     [subscription] = store.subscribers()
-    assert subscription.notifications.absences is True
-    assert store.get_notifications(user.id).absences is True
-    assert store.load_absence_snapshot(user.id) == {"courses": []}
+    flags = (subscription.notifications.absences, subscription.notifications.individual_work, subscription.notifications.course_scores)
+    assert flags == (True, True, True)
+    saved = store.get_notifications(user.id)
+    assert (saved.absences, saved.individual_work, saved.course_scores) == (True, True, True)
 
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], absences=True))
 
-    assert store.get_notifications(user.id).absences is False
-    assert store.load_absence_snapshot(user.id) is None
+    assert store.get_notifications(user.id).individual_work is False
+    assert store.load_course_snapshot(user.id, "absences") == {"courses": []}
+    assert store.load_course_snapshot(user.id, "work") is None
+    assert store.load_course_snapshot(user.id, "scores") is None
+    assert store.load_snapshot(user.id) is not None  # the grades are still watched
+
+    store.delete_notifications(user.id)
+    assert store.load_course_snapshot(user.id, "absences") is None
+
+
+@needs_database
+def test_absence_snapshots_from_the_old_table_move_to_course_snapshots(store):
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
+    with store._connect() as db:
+        # The table the previous version kept absence marks in.
+        db.execute("CREATE TABLE absence_snapshots (user_id BIGINT PRIMARY KEY, data JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())")
+        db.execute("INSERT INTO absence_snapshots (user_id, data) VALUES (%s, %s)", (user.id, Jsonb({"courses": [{"lec_open_idx": "7"}]})))
+
+    UserStore(DATABASE_URL, Fernet.generate_key().decode())  # starts up on the old database, as the API does
+
+    assert store.load_course_snapshot(user.id, "absences") == {"courses": [{"lec_open_idx": "7"}]}
+    with store._connect() as db:
+        assert db.execute("SELECT to_regclass('absence_snapshots')").fetchone()[0] is None
 
 
 @needs_database

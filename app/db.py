@@ -43,8 +43,10 @@ SCHEMA = (
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # Whether absence marks in the attendance journal are watched as well. Added after the table existed.
+    # Which course tabs are watched as well. Added after the table existed.
     "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS absences BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS individual_work BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS course_scores BOOLEAN NOT NULL DEFAULT FALSE",
     # Passwords used to be kept per notification setting. Copy them to the user and drop the old column. Runs on every
     # start; does nothing once the column is gone.
     """
@@ -67,13 +69,27 @@ SCHEMA = (
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # Last seen absence marks of each student, per course, used to spot new absences.
+    # Last seen course tab contents of each student, per watch (absences, work, scores), used to spot changes.
     """
-    CREATE TABLE IF NOT EXISTS absence_snapshots (
-        user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    CREATE TABLE IF NOT EXISTS course_snapshots (
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        watch TEXT NOT NULL,
         data JSONB NOT NULL,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (user_id, watch)
     )
+    """,
+    # Absence snapshots used to have their own table. Move them to course_snapshots, then drop it. Runs on every start;
+    # does nothing once the table is gone.
+    """
+    DO $$
+    BEGIN
+        IF to_regclass('absence_snapshots') IS NOT NULL THEN
+            INSERT INTO course_snapshots (user_id, watch, data, updated_at)
+                SELECT user_id, 'absences', data, updated_at FROM absence_snapshots ON CONFLICT DO NOTHING;
+            DROP TABLE absence_snapshots;
+        END IF;
+    END $$
     """,
     # The Telegram chat of a student. A chat belongs to one account at a time.
     """
@@ -118,6 +134,8 @@ class Notifications:
     last_checked_at: datetime | None = None
     telegram_linked: bool = False
     absences: bool = False  # whether absence marks in the attendance journal are watched
+    individual_work: bool = False  # whether new or changed individual work (Qiymətləndirmə tab) is watched
+    course_scores: bool = False  # whether the course scores (Cari müvəffəqiyyət tab) are watched
 
 
 @dataclass(frozen=True)
@@ -241,19 +259,30 @@ class UserStore:
     def set_notifications(self, user_id: int, settings: Notifications) -> None:
         """Turn notifications on or replace them. Saving them again clears a wrong-password status.
 
-        A kind of watch that is turned off loses its saved marks, so turning it on again starts from a new baseline.
+        A kind of watch that is turned off loses its saved results, so turning it on again starts from a new baseline.
         """
         with self._connect() as db:
             db.execute(
-                "INSERT INTO notification_settings (user_id, email, fields, absences) VALUES (%s, %s, %s, %s) "
+                "INSERT INTO notification_settings (user_id, email, fields, absences, individual_work, course_scores) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (user_id) DO UPDATE SET email = excluded.email, fields = excluded.fields, "
-                "absences = excluded.absences, status = 'ok', last_checked_at = NULL, updated_at = now()",
-                (user_id, settings.email, settings.fields, settings.absences),
+                "absences = excluded.absences, individual_work = excluded.individual_work, course_scores = excluded.course_scores, "
+                "status = 'ok', last_checked_at = NULL, updated_at = now()",
+                (user_id, settings.email, settings.fields, settings.absences, settings.individual_work, settings.course_scores),
             )
             if not settings.fields:
                 db.execute("DELETE FROM grade_snapshots WHERE user_id = %s", (user_id,))
-            if not settings.absences:
-                db.execute("DELETE FROM absence_snapshots WHERE user_id = %s", (user_id,))
+            # The names of the course tab watches are the ones the watcher uses (see COURSE_WATCHES in checker.py).
+            enabled = [
+                name
+                for name, on in (
+                    ("absences", settings.absences),
+                    ("work", settings.individual_work),
+                    ("scores", settings.course_scores),
+                )
+                if on
+            ]
+            db.execute("DELETE FROM course_snapshots WHERE user_id = %s AND NOT (watch = ANY(%s))", (user_id, enabled))
 
     def _decrypt_password(self, user_id: int, encrypted: bytes | None) -> str | None:
         if encrypted is None:
@@ -267,8 +296,8 @@ class UserStore:
     def get_notifications(self, user_id: int) -> Notifications | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT n.email, n.fields, n.status, n.last_checked_at, t.user_id IS NOT NULL, n.absences "
-                "FROM notification_settings n LEFT JOIN telegram_chats t ON t.user_id = n.user_id WHERE n.user_id = %s",
+                "SELECT n.email, n.fields, n.status, n.last_checked_at, t.user_id IS NOT NULL, n.absences, n.individual_work, "
+                "n.course_scores FROM notification_settings n LEFT JOIN telegram_chats t ON t.user_id = n.user_id WHERE n.user_id = %s",
                 (user_id,),
             ).fetchone()
         return Notifications(*row) if row else None
@@ -281,28 +310,37 @@ class UserStore:
             )
 
     def delete_notifications(self, user_id: int) -> None:
-        """Turn notifications off: removes the email and the saved results and marks. The saved password and the Telegram link stay."""
+        """Turn notifications off: removes the email and the saved results. The saved password and the Telegram link stay."""
         with self._connect() as db:
             db.execute("DELETE FROM notification_settings WHERE user_id = %s", (user_id,))
             db.execute("DELETE FROM grade_snapshots WHERE user_id = %s", (user_id,))
-            db.execute("DELETE FROM absence_snapshots WHERE user_id = %s", (user_id,))
+            db.execute("DELETE FROM course_snapshots WHERE user_id = %s", (user_id,))
 
     def subscribers(self) -> list[Subscription]:
         """Every student with notifications on, with the password the watcher signs in with and their Telegram chat."""
         with self._connect() as db:
             rows = db.execute(
-                "SELECT u.id, u.site_username, u.password_enc, n.email, n.fields, n.status, n.last_checked_at, t.chat_id, n.absences "
+                "SELECT u.id, u.site_username, u.password_enc, n.email, n.fields, n.status, n.last_checked_at, t.chat_id, "
+                "n.absences, n.individual_work, n.course_scores "
                 "FROM notification_settings n JOIN users u ON u.id = n.user_id "
                 "LEFT JOIN telegram_chats t ON t.user_id = u.id ORDER BY u.id"
             ).fetchall()
         subscriptions = []
-        for user_id, site_username, password_enc, email, fields, status, checked_at, chat_id, absences in rows:
+        for user_id, site_username, password_enc, email, fields, status, checked_at, chat_id, *watches in rows:
             password = self._decrypt_password(user_id, password_enc)
             if password is None:
                 log.warning("User %s has no usable saved password, skipping", user_id)
                 continue
+            absences, individual_work, course_scores = watches
             notifications = Notifications(
-                email, fields, status, checked_at, telegram_linked=chat_id is not None, absences=absences
+                email,
+                fields,
+                status,
+                checked_at,
+                telegram_linked=chat_id is not None,
+                absences=absences,
+                individual_work=individual_work,
+                course_scores=course_scores,
             )
             subscriptions.append(Subscription(user_id, site_username, password, notifications, chat_id))
         return subscriptions
@@ -320,17 +358,20 @@ class UserStore:
                 (user_id, Jsonb(data)),
             )
 
-    def load_absence_snapshot(self, user_id: int) -> dict | None:
+    def load_course_snapshot(self, user_id: int, watch: str) -> dict | None:
+        """The last seen course tab contents of one watch (absences, work or scores), or None before the first check."""
         with self._connect() as db:
-            row = db.execute("SELECT data FROM absence_snapshots WHERE user_id = %s", (user_id,)).fetchone()
+            row = db.execute(
+                "SELECT data FROM course_snapshots WHERE user_id = %s AND watch = %s", (user_id, watch)
+            ).fetchone()
         return row[0] if row else None
 
-    def save_absence_snapshot(self, user_id: int, data: dict) -> None:
+    def save_course_snapshot(self, user_id: int, watch: str, data: dict) -> None:
         with self._connect() as db:
             db.execute(
-                "INSERT INTO absence_snapshots (user_id, data) VALUES (%s, %s) "
-                "ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = now()",
-                (user_id, Jsonb(data)),
+                "INSERT INTO course_snapshots (user_id, watch, data) VALUES (%s, %s, %s) "
+                "ON CONFLICT (user_id, watch) DO UPDATE SET data = excluded.data, updated_at = now()",
+                (user_id, watch, Jsonb(data)),
             )
 
     def create_link_code(self, user_id: int) -> tuple[str, datetime]:

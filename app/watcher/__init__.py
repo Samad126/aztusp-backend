@@ -1,1 +1,1 @@
-"""Watcher: mails and messages Telegram when a watched result or an absence mark changes."""
+"""Watcher: mails and messages Telegram when a watched result, absence, individual work or course score changes."""

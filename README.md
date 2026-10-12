@@ -16,7 +16,7 @@ pages, and returns structured data with English field names.
    to the portal and returns an API token, which lasts 1 day.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
-4. Students can also turn on change notifications, so they get a message when a watched result changes or an absence is marked. See [Grade watcher](#grade-watcher).
+4. Students can also turn on change notifications, so they get a message when a watched result, absence, individual work or course score changes. See [Grade watcher](#grade-watcher).
 5. `POST /api/v1/auth/logout` signs out of the university site too and ends the API session. Saved data is kept, so change notifications keep running.
 
 ### Privacy and security
@@ -222,6 +222,7 @@ app/
     telegram.py      connects chats from /start <code> messages
     results.py       picks the watched fields and finds changes
     absences.py      reads the student's marks in each attendance journal and finds new absences
+    tabs.py          individual work and course score tabs: reads them and finds what changed
     config.py        shared watcher settings
 tests/               pytest suite
 deploy/nginx/   nginx config for the API domain
@@ -252,23 +253,34 @@ as Docker starts at boot. Check that once with `sudo systemctl enable docker`, a
 
 ## Grade watcher
 
-`python -m app.watcher` checks the scores of every student who turned change notifications on, every
-`WATCH_INTERVAL_MINUTES` (default 30). For each student it signs in with their saved password, reads the scores
-table, and sends an email and/or a Telegram message when a watched field changes (by default `final_score` and
-`grade`). Each message names the course, the semester and the new result. The first check only records the
-current results, so nothing old is announced. The same check can also watch absence marks, see [Absence marks](#absence-marks).
+`python -m app.watcher` checks every student who turned change notifications on, every `WATCH_INTERVAL_MINUTES`
+(default 30). For each student it signs in with their saved password, reads what they watch, and sends an email and/or
+a Telegram message when something changes. The first check only records the current state, so nothing old is announced.
 
-### Absence marks
+What a student can watch (`PUT /api/v1/me/notifications`):
 
-Set `"absences": true` in `PUT /api/v1/me/notifications` to also watch the attendance journal (Davamiyyət). The
-watcher reads the student's own mark for every class meeting in every course on the dashboard. It sends a message when
-a meeting is newly marked absent (`q/b`), including a meeting that was still blank before, or when the site changes an
-absence to present. Entering a meeting as present is not sent. Each message names the course and the meetings that
-changed, for example `Session 3 (22.09): absent (was not entered)`.
+| Field | Watches | Message names |
+|---|---|---|
+| `fields` | Scores page: `final_score` and `grade` (always together), `retake` | The course, the semester and the new result |
+| `absences` | Attendance journal (Davamiyyət): each class meeting of the student | The course and each meeting that changed |
+| `individual_work` | Individual work (Qiymətləndirmə tab): a new work, or a change to its type, topic, evaluation or dates | The course and each work that changed |
+| `course_scores` | Current course scores (Cari müvəffəqiyyət tab): each component and the total | The course and each score that changed |
 
-`fields` may be empty when `absences` is true, so a student can watch absences alone. Turning a watch off forgets its
-saved marks, so turning it on again starts from a new baseline. A course whose page cannot be read this time keeps its
-last marks, so a failing page is not reported as absences disappearing or appearing.
+`fields` accepts `final_score`, `grade` and `retake`. Choosing either `final_score` or `grade` watches both. Course type
+and credits are no longer offered: saved settings that name them are read back without them. At least one of the four
+must be on.
+
+**Absence marks:** the watcher reports a meeting newly marked absent (`q/b`), including one that was still blank, and an
+absence the site changes to present. Entering a meeting as present is not sent. Messages look like
+`Session 3 (22.09): absent (was not entered)`.
+
+**Individual work and course scores:** the individual work's detail id (the row's `send_view` id) identifies it across
+checks. A work without one is matched by its content, so renumbering doesn't count as a change, but editing such a work
+shows it as new.
+
+For every course tab, a course seen for the first time is recorded without announcing what it already holds. A course
+whose page cannot be read this time keeps its last results, so a failing page is not reported as things disappearing or
+appearing. Turning a watch off forgets its saved results, so turning it on again starts from a new baseline.
 
 **Students never send a chat id.** Telegram is connected from the frontend:
 
@@ -292,7 +304,7 @@ The response includes:
 The frontend should show `wrong_password` and `error` to the student.
 
 **What is stored:** the site password, encrypted with `APP_SECRET_KEY`, plus the email, the fields, the last seen
-results, the last seen absence marks and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
+results, the last seen contents of the course tabs and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
 (`DELETE /api/v1/me/telegram`) needs an email set first, so messages don't silently stop. Logging out keeps
 all of it. The watcher signs in on every check rather than reusing the session, because a portal session lasts
 too short a time.

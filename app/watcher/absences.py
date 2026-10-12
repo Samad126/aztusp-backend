@@ -3,10 +3,9 @@
 import logging
 from dataclasses import dataclass
 
-import requests
-
 from ..scraping import courses
 from ..scraping.client import SiteScraper
+from .tabs import UNREADABLE, take_course_snapshot
 
 log = logging.getLogger(__name__)
 
@@ -26,19 +25,9 @@ class AbsenceChange:
 def take_absence_snapshot(scraper: SiteScraper, previous: list[dict]) -> list[dict]:
     """The student's mark for every class meeting, in each course on the dashboard.
 
-    A course that cannot be read this time keeps its marks from `previous`, so a failing page is not
-    reported as the marks disappearing, nor as every absence being new when it comes back.
+    A course that cannot be read this time keeps its marks from `previous` (see take_course_snapshot).
     """
-    listing = list({c["lec_open_idx"]: c for c in courses.list_courses(scraper)}.values())
-    kept = {entry["lec_open_idx"]: entry for entry in previous}
-    snapshot = []
-    for course in listing:
-        marks = _own_marks(scraper, course, listing)
-        if marks is not None:
-            snapshot.append(marks)
-        elif course["lec_open_idx"] in kept:
-            snapshot.append(kept[course["lec_open_idx"]])
-    return snapshot
+    return take_course_snapshot(scraper, previous, _own_marks)
 
 
 def _own_marks(scraper: SiteScraper, course: dict, listing: list[dict]) -> dict | None:
@@ -46,7 +35,7 @@ def _own_marks(scraper: SiteScraper, course: dict, listing: list[dict]) -> dict 
     idx = course["lec_open_idx"]
     try:
         page = courses.course_attendance(scraper, idx, listing=listing)
-    except (requests.RequestException, courses.CourseNotFound) as exc:
+    except UNREADABLE as exc:
         log.warning("Course %s: attendance not read (%s)", idx, type(exc).__name__)
         return None
 
@@ -66,12 +55,15 @@ def _own_marks(scraper: SiteScraper, course: dict, listing: list[dict]) -> dict 
 def find_absence_changes(previous: list[dict], current: list[dict]) -> list[AbsenceChange]:
     """Meetings now marked absent that were not before, and absences the site has changed to present.
 
-    Marks that are not absences (a meeting entered as present, a blank cell) are not reported.
+    Marks that are not absences (a meeting entered as present, a blank cell) are not reported. A course seen for the
+    first time is skipped: its marks are recorded, not announced.
     """
     before = {entry["lec_open_idx"]: {s["number"]: s["mark"] for s in entry["sessions"]} for entry in previous}
     changes = []
     for entry in current:
-        old_marks = before.get(entry["lec_open_idx"], {})
+        if entry["lec_open_idx"] not in before:
+            continue
+        old_marks = before[entry["lec_open_idx"]]
         for session in entry["sessions"]:
             old, new = old_marks.get(session["number"]), session["mark"]
             if (new == ABSENT and old != ABSENT) or (old == ABSENT and new == PRESENT):

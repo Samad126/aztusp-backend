@@ -1,8 +1,8 @@
 """Run the watcher: `python -m app.watcher`.
 
 Every WATCH_INTERVAL_MINUTES it signs in as each student who turned change notifications on, reads their
-scores and attendance, and sends an email and/or Telegram message when a watched field or an absence mark
-changes. Students turn notifications on through the API, and connect Telegram with a link (see
+scores, attendance, individual work and course scores, and sends an email and/or Telegram message when
+something a student watches changes. Students turn notifications on through the API, and connect Telegram with a link (see
 /api/v1/me/telegram/link). While it runs, it also answers the bot's /start messages so those links connect.
 
   --once                 check every student once and exit (does not listen for Telegram links)

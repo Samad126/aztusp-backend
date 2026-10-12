@@ -1,19 +1,47 @@
-"""One pass of the watcher: sign in as each student who turned notifications on, read their scores and absence marks, notify changes."""
+"""One pass of the watcher: sign in as each student who turned notifications on, read what they watch, notify changes."""
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from ..config import Settings
 from ..db import Subscription, UserStore
 from ..scraping.client import BadCredentials, SiteScraper
 from ..scraping.targets import TARGETS_BY_NAME
 from .absences import find_absence_changes, format_absence_message, take_absence_snapshot
-from .config import WatcherSettings
+from .config import WatcherSettings, watched_fields
 from .notify import format_message, notify
 from .results import find_changes, take_snapshot
+from .tabs import (
+    find_score_changes,
+    find_work_changes,
+    format_score_message,
+    format_work_message,
+    take_score_snapshot,
+    take_work_snapshot,
+)
 
 log = logging.getLogger(__name__)
 
 SCORES = TARGETS_BY_NAME["scores"]
+
+
+@dataclass(frozen=True)
+class CourseWatch:
+    """A watch over the tab of every course: how it reads the tab, compares it with the last check, and words the message."""
+
+    name: str  # the key of its snapshot in the store
+    flag: str  # the notification setting that turns it on
+    take: Callable[[SiteScraper, list[dict]], list[dict]]
+    changes: Callable[[list[dict], list[dict]], list]
+    message: Callable[[list], tuple[str, str]]
+
+
+COURSE_WATCHES = (
+    CourseWatch("absences", "absences", take_absence_snapshot, find_absence_changes, format_absence_message),
+    CourseWatch("work", "individual_work", take_work_snapshot, find_work_changes, format_work_message),
+    CourseWatch("scores", "course_scores", take_score_snapshot, find_score_changes, format_score_message),
+)
 
 
 class Watcher:
@@ -38,6 +66,13 @@ class Watcher:
 
     def check(self, subscription: Subscription) -> None:
         user_id = subscription.user_id
+        notifications = subscription.notifications
+        fields = watched_fields(notifications.fields)
+        watches = [watch for watch in COURSE_WATCHES if getattr(notifications, watch.flag)]
+        if not fields and not watches:
+            # Nothing is watched any more (its fields were removed): don't sign in just to read pages nobody needs.
+            return
+
         scraper = SiteScraper(self.settings, subscription.site_username)
         try:
             # Signs in on every check: the portal session lasts too short to reuse between checks.
@@ -47,15 +82,15 @@ class Watcher:
             self.store.record_check(user_id, "wrong_password")
             return
 
-        if subscription.notifications.fields:
-            self._check_results(subscription, scraper.scrape(SCORES))
-        if subscription.notifications.absences:
-            self._check_absences(subscription, scraper)
+        if fields:
+            self._check_results(subscription, fields, scraper.scrape(SCORES))
+        for watch in watches:
+            self._check_course_watch(subscription, scraper, watch)
         self.store.record_check(user_id, "ok")
 
-    def _check_results(self, subscription: Subscription, scores: dict) -> None:
+    def _check_results(self, subscription: Subscription, fields: list[str], scores: dict) -> None:
         user_id = subscription.user_id
-        fields = tuple(subscription.notifications.fields)
+        fields = tuple(fields)
         current = take_snapshot(scores, fields)
         saved = self.store.load_snapshot(user_id)
 
@@ -77,25 +112,25 @@ class Watcher:
         # Saved even when a channel failed: the failure is logged, and a retry would re-send to the channels that worked.
         self.store.save_snapshot(user_id, {"fields": list(fields), "courses": current})
 
-    def _check_absences(self, subscription: Subscription, scraper: SiteScraper) -> None:
+    def _check_course_watch(self, subscription: Subscription, scraper: SiteScraper, watch: CourseWatch) -> None:
         user_id = subscription.user_id
-        saved = self.store.load_absence_snapshot(user_id)
+        saved = self.store.load_course_snapshot(user_id, watch.name)
         previous = saved["courses"] if saved else []
-        current = take_absence_snapshot(scraper, previous)
+        current = watch.take(scraper, previous)
 
         if saved is None:
-            # First check: record the marks without announcing the absences already there.
-            self.store.save_absence_snapshot(user_id, {"courses": current})
-            log.info("User %s: saved the absence marks of %d courses as the baseline", user_id, len(current))
+            # First check: record what is there without announcing it.
+            self.store.save_course_snapshot(user_id, watch.name, {"courses": current})
+            log.info("User %s: saved the %s of %d courses as the baseline", user_id, watch.name, len(current))
             return
         if not current and previous:
             # No courses on the dashboard is more likely a site glitch than every course ending; keep the old snapshot.
-            log.warning("User %s: no courses on the dashboard, keeping the last absence marks", user_id)
+            log.warning("User %s: no courses on the dashboard, keeping the last %s", user_id, watch.name)
             return
 
-        changes = find_absence_changes(previous, current)
+        changes = watch.changes(previous, current)
         if changes:
-            subject, body = format_absence_message(changes)
+            subject, body = watch.message(changes)
             notify(self.watcher_settings, subscription.notifications.email, subscription.telegram_chat_id, subject, body)
-        log.info("User %s: checked absence marks in %d courses, %d changed", user_id, len(current), len(changes))
-        self.store.save_absence_snapshot(user_id, {"courses": current})
+        log.info("User %s: checked %s in %d courses, %d changed", user_id, watch.name, len(current), len(changes))
+        self.store.save_course_snapshot(user_id, watch.name, {"courses": current})

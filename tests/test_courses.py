@@ -161,6 +161,15 @@ def test_scores_keep_every_cell_including_zero_and_empty():
     assert page["notes"] == ["*Qeyd: Məşğələ balının görünməsi üçün minimum 3 qiymət olmalıdır."]
 
 
+def test_an_empty_score_cell_is_no_score_and_a_zero_shown_as_text_is_one(monkeypatch):
+    # Some courses leave Davamiyyət empty (only a hidden input), others show 0 as text.
+    monkeypatch.setitem(TAB_PAGES, "lecture_score", SCORES.replace('<td><input type="hidden" value="0"></td>', '<td><font color="">0</font></td>', 1))
+
+    components = courses.course_scores(FakeScraper(), "7")["components"]
+
+    assert components[-1] == {"name": "Davamiyyət", "max": None, "score": "0"}
+
+
 def test_attendance_returns_header_legend_sessions_and_every_student():
     page = courses.course_attendance(FakeScraper(), "7")
     assert page["info"] == {

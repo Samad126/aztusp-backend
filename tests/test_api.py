@@ -193,7 +193,7 @@ def test_turning_notifications_on_never_returns_the_password(client):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["email"] == "student@example.com" and body["fields"] == ["grade"]
+    assert body["email"] == "student@example.com" and body["fields"] == ["final_score", "grade"]  # the pair always comes together
     assert body["status"] == "ok" and body["last_checked_at"] is None and body["telegram_linked"] is False
     assert "password" not in body and "good" not in response.text
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
@@ -218,7 +218,10 @@ def test_an_email_or_a_connected_telegram_is_required(client, store):
     assert response.status_code == 200 and response.json()["telegram_linked"] is True
 
 
-@pytest.mark.parametrize("change", [{"fields": ["nope"]}, {"fields": []}, {"email": "not-an-address"}])
+@pytest.mark.parametrize(
+    "change",
+    [{"fields": ["nope"]}, {"fields": ["credits"]}, {"fields": ["course_type"]}, {"fields": []}, {"email": "not-an-address"}],
+)
 def test_invalid_notification_settings_are_rejected(client, change):
     response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, **change}, headers=login(client))
 
@@ -233,6 +236,18 @@ def test_absence_marks_can_be_watched_without_result_fields(client):
     assert response.status_code == 200
     assert response.json()["absences"] is True and response.json()["fields"] == []
     assert client.get("/api/v1/me/notifications", headers=headers).json()["absences"] is True
+
+
+def test_individual_work_and_course_scores_are_saved_and_read_back(client):
+    headers = login(client)
+    watching = {"fields": [], "individual_work": True, "course_scores": True}
+
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, **watching}, headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["individual_work"], body["course_scores"], body["absences"]) == (True, True, False)
+    assert client.get("/api/v1/me/notifications", headers=headers).json() == body
 
 
 def test_turning_notifications_off(client):

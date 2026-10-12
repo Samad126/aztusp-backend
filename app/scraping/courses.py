@@ -165,9 +165,9 @@ def _visible_tables(content: Tag | BeautifulSoup) -> list[Tag]:
     return [table for table in content.find_all("table") if not _is_hidden(table)]
 
 
-def course_items(scraper: SiteScraper, lec_open_idx: str, name: str) -> dict:
+def course_items(scraper: SiteScraper, lec_open_idx: str, name: str, listing: list[dict] | None = None) -> dict:
     """A list tab (notices, board, materials, tasks) as records. An empty list means nothing was posted."""
-    params, content, course, url = _fetch_tab(scraper, lec_open_idx, name)
+    params, content, course, url = _fetch_tab(scraper, lec_open_idx, name, listing)
     tables = _visible_tables(content)
     table = next((t for t in tables if t.find("thead")), None) or next((t for t in tables if t.get("id") == "op_list"), None)
     return {"params": params, "course": course, "items": _table_records(table, url) if table else []}
@@ -210,9 +210,9 @@ def _detail_id(row: Tag) -> str | None:
     return None
 
 
-def course_scores(scraper: SiteScraper, lec_open_idx: str) -> dict:
+def course_scores(scraper: SiteScraper, lec_open_idx: str, listing: list[dict] | None = None) -> dict:
     """Current scores: one component per column of the score table (name, maximum, score) plus the total."""
-    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "scores")
+    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "scores", listing)
     result: dict = {"params": params, "course": course, "table": [], "components": [], "total": None, "notes": []}
 
     table = content.select_one("table#toplam_score") or _find_score_table(content)

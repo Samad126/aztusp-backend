@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .watcher.config import DEFAULT_FIELDS, WATCHABLE_FIELDS
+from .watcher.config import DEFAULT_FIELDS, WATCHABLE_FIELDS, watched_fields
 
 
 class Detail(BaseModel):
@@ -39,12 +39,23 @@ class NotificationSettings(BaseModel):
     )
     fields: list[str] = Field(
         default_factory=lambda: list(DEFAULT_FIELDS),
-        description=f"Result fields to watch, one or more of: {', '.join(WATCHABLE_FIELDS)}. Can be empty when `absences` is true.",
+        description=f"Result fields to watch, from: {', '.join(WATCHABLE_FIELDS)}. `final_score` and `grade` always come together, "
+        "so choosing either watches both. Can be empty when another watch is on.",
     )
     absences: bool = Field(
         False,
         description="Also watch absence marks in the attendance journal (Davamiyyət). A session newly marked absent, or an "
         "absence the site changes to present, is sent.",
+    )
+    individual_work: bool = Field(
+        False,
+        description="Also watch the individual work of each course (Qiymətləndirmə tab). A new work, or a change to its type, "
+        "topic, evaluation or dates, is sent.",
+    )
+    course_scores: bool = Field(
+        False,
+        description="Also watch the current scores of each course (Cari müvəffəqiyyət tab). A component's score or the total "
+        "that changes is sent.",
     )
 
     @field_validator("email")
@@ -56,19 +67,38 @@ class NotificationSettings(BaseModel):
             raise ValueError("must be an email address")
         return value
 
-    @model_validator(mode="after")
-    def known_fields(self):
-        if any(name not in WATCHABLE_FIELDS for name in self.fields):
-            raise ValueError(f"fields must be one or more of: {', '.join(WATCHABLE_FIELDS)}")
-        if not self.fields and not self.absences:
-            raise ValueError(f"fields must be one or more of: {', '.join(WATCHABLE_FIELDS)}, or absences must be true")
-        return self
+    @field_validator("fields")
+    @classmethod
+    def in_watch_order(cls, fields: list[str]) -> list[str]:
+        # Also applies to what is read back, so settings saved before a field was removed are never rejected.
+        return watched_fields(fields)
 
 
 class NotificationsIn(NotificationSettings):
     model_config = ConfigDict(
-        json_schema_extra={"example": {"email": "student@example.com", "fields": ["final_score", "grade"], "absences": True}}
+        json_schema_extra={
+            "example": {
+                "email": "student@example.com",
+                "fields": ["final_score", "grade"],
+                "absences": True,
+                "individual_work": True,
+                "course_scores": False,
+            }
+        }
     )
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def known_fields(cls, fields):
+        if isinstance(fields, list) and any(name not in WATCHABLE_FIELDS for name in fields):
+            raise ValueError(f"fields must be from: {', '.join(WATCHABLE_FIELDS)}")
+        return fields
+
+    @model_validator(mode="after")
+    def something_to_watch(self):
+        if not (self.fields or self.absences or self.individual_work or self.course_scores):
+            raise ValueError("choose something to watch: fields, absences, individual_work or course_scores")
+        return self
 
 
 class NotificationsOut(NotificationSettings):
@@ -78,6 +108,8 @@ class NotificationsOut(NotificationSettings):
                 "email": "student@example.com",
                 "fields": ["final_score", "grade"],
                 "absences": True,
+                "individual_work": True,
+                "course_scores": False,
                 "telegram_linked": True,
                 "status": "ok",
                 "last_checked_at": "2026-10-10T11:30:00Z",

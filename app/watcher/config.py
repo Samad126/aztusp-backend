@@ -8,9 +8,20 @@ from dataclasses import dataclass, field
 
 from ..config import ConfigError
 
-WATCHABLE_FIELDS = ("course_type", "credits", "final_score", "grade", "retake")
+WATCHABLE_FIELDS = ("final_score", "grade", "retake")
 DEFAULT_FIELDS = ("final_score", "grade")
+# Watched as one: choosing either watches both, and a change to either is sent with both.
+RESULT_PAIR = ("final_score", "grade")
 DEFAULT_INTERVAL_MINUTES = 30
+
+
+def watched_fields(fields) -> list[str]:
+    """The result fields to watch, in WATCHABLE_FIELDS order. Final score and grade always come together, and names that
+    are no longer offered (course type and credits, saved before they were removed) are dropped."""
+    chosen = set(fields)
+    if chosen & set(RESULT_PAIR):
+        chosen |= set(RESULT_PAIR)
+    return [name for name in WATCHABLE_FIELDS if name in chosen]
 
 
 @dataclass(frozen=True)

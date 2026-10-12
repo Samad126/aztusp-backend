@@ -14,8 +14,6 @@ log = logging.getLogger(__name__)
 
 TIMEOUT = 20
 FIELD_LABELS = {
-    "course_type": "Type",
-    "credits": "Credits",
     "final_score": "Final score",
     "grade": "Grade",
     "retake": "Retake",
