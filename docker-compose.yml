@@ -14,6 +14,8 @@ services:
       test: ["CMD-SHELL", "pg_isready -U aztusp"]
       interval: 3s
       retries: 10
+    # Start again after a reboot or power cut. Without this the database stays stopped while the API restarts and fails.
+    restart: unless-stopped
 
   api:
     build: .

@@ -246,6 +246,9 @@ On the server, the checkout needs a `.env` next to `docker-compose.yml`. The API
 `127.0.0.1:3003`; put nginx in front of it using [deploy/nginx/aztuapi.alakbaroff.com.conf](deploy/nginx/aztuapi.alakbaroff.com.conf).
 The nginx config is not installed by the workflow; copy it to `/etc/nginx/conf.d/` and reload nginx by hand.
 
+After a reboot or power cut, `api`, `watcher` and `db` all start again by themselves (`restart: unless-stopped`), as long
+as Docker starts at boot. Check that once with `sudo systemctl enable docker`, and look at `docker compose ps` after a reboot.
+
 ## Grade watcher
 
 `python -m app.watcher` checks the scores of every student who turned change notifications on, every

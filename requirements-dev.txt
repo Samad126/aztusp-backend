@@ -3,3 +3,5 @@ pytest>=8
 httpx2>=2
 # Builds the timetable PDFs the tests read.
 reportlab>=4
+# Reads docker-compose.yml in tests/test_compose.py.
+pyyaml>=6
