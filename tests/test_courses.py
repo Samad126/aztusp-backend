@@ -15,6 +15,10 @@ FILLED_LIST = TITLE + """<div id="secondary_content"><table id="op_list"><thead>
 <tbody><tr onclick="send_view(12)"><td>1</td><td>Syllabus</td><td>Dr. X</td><td>2026-09-20</td><td>4</td></tr>
 <tr><td>2</td><td><a href="/files/a.pdf">Slides</a></td><td>Dr. X</td><td>2026-09-27</td><td>0</td></tr></tbody></table></div>"""
 
+LOOSE_LIST = TITLE + """<div id="secondary_content"><table id="op_list" class="table table-striped"><thead class="text-center"><th>Nömrə</th><th>Movzu</th><th>Müəllif</th><th>Tarix</th><th>Müraciətlərin sayı</th></thead>
+<tr><td>1</td><td onclick="send_view('12');">Syllabus</td><td>Dr. X</td><td>2026-09-20</td><td>4</td></tr>
+<tr><td>2</td><td><a href="/files/a.pdf">Slides</a></td><td>Dr. X</td><td>2026-09-27</td><td>0</td></tr></table></div>"""
+
 TASKS = TITLE + """<div id="secondary_content"><table id="datatable-task"><thead><tr><th>Nömrə</th><th>Sərbəst işin növü</th><th>Qiymətləndirmə</th><th>Movzu</th><th></th><th>Başlanğıc</th><th>Son gun</th></tr></thead>
 <tbody><tr><td colspan="8">Qeyd olunmuş material yoxdur</td></tr></tbody></table></div>"""
 
@@ -152,6 +156,23 @@ def test_list_tab_rows_get_english_keys_ids_and_links():
         {"number": "1", "subject": "Syllabus", "author": "Dr. X", "date": "2026-09-20", "views": "4", "id": "12"},
         {"number": "2", "subject": "Slides", "author": "Dr. X", "date": "2026-09-27", "views": "0", "link": "https://d.example.com/files/a.pdf"},
     ]
+
+
+def test_header_written_straight_into_thead_names_the_columns_and_keeps_every_row(monkeypatch):
+    monkeypatch.setitem(TAB_PAGES, "lecture_data", LOOSE_LIST)
+    page = courses.course_items(FakeScraper(), "7", "materials")
+    assert page["items"] == [
+        {"number": "1", "subject": "Syllabus", "author": "Dr. X", "date": "2026-09-20", "views": "4", "id": "12"},
+        {"number": "2", "subject": "Slides", "author": "Dr. X", "date": "2026-09-27", "views": "0", "link": "https://d.example.com/files/a.pdf"},
+    ]
+
+
+def test_loose_header_with_only_the_empty_state_has_no_items():
+    table = BeautifulSoup(
+        '<table id="op_list"><thead><th>Nömrə</th><th>Movzu</th></thead><tr><td colspan="2">Qeyd olunmuş material yoxdur</td></tr></table>',
+        "html.parser",
+    ).table
+    assert courses._table_records(table, "https://d.example.com/x") == []
 
 
 def test_scores_keep_every_cell_including_zero_and_empty():

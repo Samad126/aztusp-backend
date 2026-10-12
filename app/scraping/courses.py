@@ -174,7 +174,7 @@ def course_items(scraper: SiteScraper, lec_open_idx: str, name: str, listing: li
 
 
 def _table_records(table: Tag, page_url: str) -> list[dict[str, str]]:
-    """Records for a list table: the first row names the columns.
+    """Records for a list table: the first row names the columns, unless the header is loose (see _loose_header).
 
     A lone cell spanning the table ("Qeyd olunmuş material yoxdur") is the site's empty state and is
     skipped. When a row opens a detail view with send_view(<id>), that id is returned as "id", and the
@@ -182,13 +182,17 @@ def _table_records(table: Tag, page_url: str) -> list[dict[str, str]]:
     """
     rows = [(row, row.find_all(["td", "th"], recursive=False)) for row in table.find_all("tr")]
     rows = [(row, cells) for row, cells in rows if cells]
-    if len(rows) < 2:
+    if loose := _loose_header(table):
+        header, data = loose, rows
+    elif len(rows) >= 2:
+        header, data = rows[0][1], rows[1:]
+    else:
         return []
-    labels = [_clean(cell.get_text(" ", strip=True)) for cell in rows[0][1]]
+    labels = [_clean(cell.get_text(" ", strip=True)) for cell in header]
     keys = [TAB_COLUMN_MAP.get(label) or FIELD_MAP.get(label) or label or f"column_{i}" for i, label in enumerate(labels, 1)]
 
     records = []
-    for row, cells in rows[1:]:
+    for row, cells in data:
         if len(cells) == 1 and (cells[0].get("colspan") or len(keys) > 1):
             continue
         row_keys = keys if len(cells) == len(keys) else [f"column_{i}" for i in range(1, len(cells) + 1)]
@@ -200,6 +204,16 @@ def _table_records(table: Tag, page_url: str) -> list[dict[str, str]]:
             record["link"] = urljoin(page_url, link)
         records.append(record)
     return records
+
+
+def _loose_header(table: Tag) -> list[Tag]:
+    """Header cells the portal writes straight into <thead>, with no row around them (`<thead><th>Movzu</th>...</thead>`).
+
+    A header inside a row is not loose, and neither is a table without a <thead>."""
+    thead = table.find("thead")
+    if thead is None:
+        return []
+    return [cell for cell in thead.find_all(["td", "th"]) if cell.find_parent(["tr", "thead"]) is thead]
 
 
 def _detail_id(row: Tag) -> str | None:
