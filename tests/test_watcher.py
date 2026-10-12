@@ -659,17 +659,17 @@ def test_absence_watch_can_be_on_without_any_result_field():
 def test_final_score_and_grade_are_always_watched_together():
     assert NotificationsIn(fields=["grade"]).fields == ["final_score", "grade"]
     assert NotificationsIn(fields=["final_score"]).fields == ["final_score", "grade"]
-    assert NotificationsIn(fields=["retake", "grade"]).fields == ["final_score", "grade", "retake"]
+    assert NotificationsIn(fields=["final_score", "grade"]).fields == ["final_score", "grade"]
 
 
-@pytest.mark.parametrize("name", ["course_type", "credits", "nope"])
+@pytest.mark.parametrize("name", ["course_type", "credits", "retake", "nope"])
 def test_fields_that_are_not_offered_are_refused(name):
     with pytest.raises(ValidationError, match="fields must be from"):
         NotificationsIn(fields=[name])
 
 
 def test_settings_saved_before_a_field_was_removed_still_read_back():
-    saved = NotificationsOut(email=None, fields=["course_type", "credits"], telegram_linked=True, status="ok")
+    saved = NotificationsOut(email=None, fields=["course_type", "credits", "retake"], telegram_linked=True, status="ok")
 
     assert saved.fields == []
 
@@ -708,9 +708,9 @@ def course_tabs(monkeypatch):
 
 
 def test_watched_fields_keep_the_pair_together_and_drop_retired_names():
-    assert watched_fields(("course_type", "credits")) == []
+    assert watched_fields(("course_type", "credits", "retake")) == []
     assert watched_fields(("grade",)) == ["final_score", "grade"]
-    assert watched_fields(("retake", "credits", "final_score")) == ["final_score", "grade", "retake"]
+    assert watched_fields(("retake", "credits", "final_score")) == ["final_score", "grade"]
 
 
 def test_work_snapshot_lists_every_work_of_each_course(course_tabs):

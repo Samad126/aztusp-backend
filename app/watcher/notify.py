@@ -16,7 +16,6 @@ TIMEOUT = 20
 FIELD_LABELS = {
     "final_score": "Final score",
     "grade": "Grade",
-    "retake": "Retake",
 }
 
 

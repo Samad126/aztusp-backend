@@ -261,14 +261,13 @@ What a student can watch (`PUT /api/v1/me/notifications`):
 
 | Field | Watches | Message names |
 |---|---|---|
-| `fields` | Scores page: `final_score` and `grade` (always together), `retake` | The course, the semester and the new result |
+| `fields` | Scores page: `final_score` and `grade` (always together) | The course, the semester and the new result |
 | `absences` | Attendance journal (Davamiyyət): each class meeting of the student | The course and each meeting that changed |
 | `individual_work` | Individual work (Qiymətləndirmə tab): a new work, or a change to its type, topic, evaluation or dates | The course and each work that changed |
 | `course_scores` | Current course scores (Cari müvəffəqiyyət tab): each component and the total | The course and each score that changed |
 
-`fields` accepts `final_score`, `grade` and `retake`. Choosing either `final_score` or `grade` watches both. Course type
-and credits are no longer offered: saved settings that name them are read back without them. At least one of the four
-must be on.
+`fields` accepts `final_score` and `grade`. Choosing either one watches both. Course type, credits and retake are no
+longer offered: saved settings that name them are read back without them. At least one of the four must be on.
 
 **Absence marks:** the watcher reports a meeting newly marked absent (`q/b`), including one that was still blank, and an
 absence the site changes to present. Entering a meeting as present is not sent. Messages look like

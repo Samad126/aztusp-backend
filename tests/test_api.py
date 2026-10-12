@@ -220,7 +220,14 @@ def test_an_email_or_a_connected_telegram_is_required(client, store):
 
 @pytest.mark.parametrize(
     "change",
-    [{"fields": ["nope"]}, {"fields": ["credits"]}, {"fields": ["course_type"]}, {"fields": []}, {"email": "not-an-address"}],
+    [
+        {"fields": ["nope"]},
+        {"fields": ["credits"]},
+        {"fields": ["course_type"]},
+        {"fields": ["retake"]},
+        {"fields": []},
+        {"email": "not-an-address"},
+    ],
 )
 def test_invalid_notification_settings_are_rejected(client, change):
     response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, **change}, headers=login(client))
