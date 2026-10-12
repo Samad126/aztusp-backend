@@ -170,7 +170,7 @@ def course_items(scraper: SiteScraper, lec_open_idx: str, name: str, listing: li
     params, content, course, url = _fetch_tab(scraper, lec_open_idx, name, listing)
     tables = _visible_tables(content)
     table = next((t for t in tables if t.find("thead")), None) or next((t for t in tables if t.get("id") == "op_list"), None)
-    return {"params": params, "course": course, "items": _table_records(table, url) if table else []}
+    return {"params": params, "url": url, "course": course, "items": _table_records(table, url) if table else []}
 
 
 def _table_records(table: Tag, page_url: str) -> list[dict[str, str]]:
@@ -212,8 +212,8 @@ def _detail_id(row: Tag) -> str | None:
 
 def course_scores(scraper: SiteScraper, lec_open_idx: str, listing: list[dict] | None = None) -> dict:
     """Current scores: one component per column of the score table (name, maximum, score) plus the total."""
-    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "scores", listing)
-    result: dict = {"params": params, "course": course, "table": [], "components": [], "total": None, "notes": []}
+    params, content, course, url = _fetch_tab(scraper, lec_open_idx, "scores", listing)
+    result: dict = {"params": params, "url": url, "course": course, "table": [], "components": [], "total": None, "notes": []}
 
     table = content.select_one("table#toplam_score") or _find_score_table(content)
     grid = _score_grid(table) if table else []
@@ -246,8 +246,8 @@ def _find_score_table(content: Tag | BeautifulSoup) -> Tag | None:
 
 def course_attendance(scraper: SiteScraper, lec_open_idx: str, listing: list[dict] | None = None) -> dict:
     """The attendance table: class meetings, every student row with a mark per meeting, and the header values."""
-    params, content, course, _ = _fetch_tab(scraper, lec_open_idx, "attendance", listing)
-    result: dict = {"params": params, "course": course, "info": {}, "legend": {}, "header": {}, "sessions": [], "students": []}
+    params, content, course, url = _fetch_tab(scraper, lec_open_idx, "attendance", listing)
+    result: dict = {"params": params, "url": url, "course": course, "info": {}, "legend": {}, "header": {}, "sessions": [], "students": []}
 
     tables = _visible_tables(content)
     info_table = next((t for t in tables if t.get("id") == "op_list"), None)

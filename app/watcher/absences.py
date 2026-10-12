@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from ..scraping import courses
 from ..scraping.client import SiteScraper
+from .links import CourseLink, course_links
 from .tabs import UNREADABLE, take_course_snapshot
 
 log = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class AbsenceChange:
     date: str | None
     old: str | None  # the mark at the last check; None when that check had no mark for the meeting
     new: str
+    link: CourseLink
 
 
 def take_absence_snapshot(scraper: SiteScraper, previous: list[dict]) -> list[dict]:
@@ -48,6 +50,7 @@ def _own_marks(scraper: SiteScraper, course: dict, listing: list[dict]) -> dict 
     return {
         "lec_open_idx": idx,
         "course": page["course"] or course["name"],
+        "site_url": page["url"],
         "sessions": [{"number": m["session"], "date": dates.get(m["session"]), "mark": m["mark"]} for m in own["marks"]],
     }
 
@@ -64,15 +67,16 @@ def find_absence_changes(previous: list[dict], current: list[dict]) -> list[Abse
         if entry["lec_open_idx"] not in before:
             continue
         old_marks = before[entry["lec_open_idx"]]
+        link = CourseLink(entry["lec_open_idx"], entry.get("site_url"))
         for session in entry["sessions"]:
             old, new = old_marks.get(session["number"]), session["mark"]
             if (new == ABSENT and old != ABSENT) or (old == ABSENT and new == PRESENT):
-                changes.append(AbsenceChange(entry["course"], session["number"], session["date"], old, new))
+                changes.append(AbsenceChange(entry["course"], session["number"], session["date"], old, new, link))
     return changes
 
 
-def format_absence_message(changes: list[AbsenceChange]) -> tuple[str, str]:
-    """Subject and body naming each course and the meetings whose mark changed."""
+def format_absence_message(changes: list[AbsenceChange], frontend_url: str) -> tuple[str, str]:
+    """Subject and body naming each course and the meetings whose mark changed, with links to the attendance tab."""
     by_course: dict[str, list[AbsenceChange]] = {}
     for change in changes:
         by_course.setdefault(change.course, []).append(change)
@@ -93,5 +97,6 @@ def format_absence_message(changes: list[AbsenceChange]) -> tuple[str, str]:
             if change.old is not None:
                 line += f" (was {MARK_LABELS[change.old]})"
             lines.append(line)
+        lines.append(course_links(frontend_url, items[0].link, "attendance"))
         blocks.append("\n".join(lines))
     return subject, "\n\n".join(blocks)

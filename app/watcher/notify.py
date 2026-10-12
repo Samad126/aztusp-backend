@@ -8,6 +8,7 @@ from email.message import EmailMessage
 import requests
 
 from .config import SmtpSettings, WatcherSettings
+from .links import grades_links
 from .results import Change
 
 log = logging.getLogger(__name__)
@@ -23,8 +24,8 @@ class NotifyError(RuntimeError):
     pass
 
 
-def format_message(changes: list[Change]) -> tuple[str, str]:
-    """Subject and body naming each course and the result that changed."""
+def format_message(changes: list[Change], frontend_url: str, site_url: str) -> tuple[str, str]:
+    """Subject and body naming each course and the result that changed, then links to the grades page and the university's."""
     courses: dict[tuple[str | None, str], list[Change]] = {}
     for change in changes:
         courses.setdefault((change.semester, change.course), []).append(change)
@@ -45,7 +46,7 @@ def format_message(changes: list[Change]) -> tuple[str, str]:
                 line += f" (was {change.old})"
             lines.append(line)
         blocks.append("\n".join(lines))
-    return subject, "\n\n".join(blocks)
+    return subject, "\n\n".join(blocks) + "\n\n" + grades_links(frontend_url, site_url)
 
 
 def notify(settings: WatcherSettings, email: str | None, telegram_chat_id: str | None, subject: str, body: str) -> bool:

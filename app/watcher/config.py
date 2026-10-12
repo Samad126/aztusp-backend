@@ -13,6 +13,7 @@ DEFAULT_FIELDS = ("final_score", "grade")
 # Watched as one: choosing either watches both, and a change to either is sent with both.
 RESULT_PAIR = ("final_score", "grade")
 DEFAULT_INTERVAL_MINUTES = 30
+DEFAULT_FRONTEND_URL = "https://aztu.alakbaroff.com"
 
 
 def watched_fields(fields) -> list[str]:
@@ -38,6 +39,7 @@ class WatcherSettings:
     interval_seconds: int
     smtp: SmtpSettings | None
     telegram_bot_token: str | None = field(default=None, repr=False)
+    frontend_url: str = DEFAULT_FRONTEND_URL  # AZTUSP, where the links in a message open; no trailing slash
 
     @classmethod
     def from_env(cls) -> "WatcherSettings":
@@ -52,7 +54,8 @@ class WatcherSettings:
                 "No delivery channel configured: set SMTP_HOST, SMTP_USERNAME and SMTP_PASSWORD for email, "
                 "TELEGRAM_BOT_TOKEN for Telegram, or both"
             )
-        return cls(interval_seconds=minutes * 60, smtp=smtp, telegram_bot_token=token)
+        frontend_url = (_env("FRONTEND_URL") or DEFAULT_FRONTEND_URL).rstrip("/")
+        return cls(interval_seconds=minutes * 60, smtp=smtp, telegram_bot_token=token, frontend_url=frontend_url)
 
 
 def _env(key: str, default: str = "") -> str:

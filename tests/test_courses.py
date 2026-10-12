@@ -137,7 +137,12 @@ def test_list_tab_empty_state_gives_no_items_and_ignores_hidden_table():
     scraper = FakeScraper()
     page = courses.course_items(scraper, "7", "notices")
     assert scraper.urls[-1].endswith("/studies/lecture_notice.php?lec_open_idx=7&lecture_code=MA1&sem_code=S2")
-    assert page == {"params": {"lec_open_idx": "7", "lecture_code": "MA1", "sem_code": "S2"}, "course": "Math ( M1 )", "items": []}
+    assert page == {
+        "params": {"lec_open_idx": "7", "lecture_code": "MA1", "sem_code": "S2"},
+        "url": scraper.urls[-1],
+        "course": "Math ( M1 )",
+        "items": [],
+    }
     assert courses.course_items(scraper, "7", "tasks")["items"] == []
 
 
@@ -151,6 +156,7 @@ def test_list_tab_rows_get_english_keys_ids_and_links():
 
 def test_scores_keep_every_cell_including_zero_and_empty():
     page = courses.course_scores(FakeScraper(), "7")
+    assert page["url"].endswith("/studies/lecture_score.php?lec_open_idx=7&lecture_code=MA1&sem_code=S2")
     assert page["table"] == [{"sərbəst iş(10)": "7", "Məşğələ(30)": "0", "Davamiyyət": "", "Toplam": "7"}]
     assert page["components"] == [
         {"name": "sərbəst iş", "max": "10", "score": "7"},
@@ -172,6 +178,7 @@ def test_an_empty_score_cell_is_no_score_and_a_zero_shown_as_text_is_one(monkeyp
 
 def test_attendance_returns_header_legend_sessions_and_every_student():
     page = courses.course_attendance(FakeScraper(), "7")
+    assert page["url"].endswith("/studies/lecture_attend.php?lec_open_idx=7&lecture_code=MA1&sem_code=S2")
     assert page["info"] == {
         "course": "Math", "total_hours": "30", "weekly_hours": "", "credits": "6", "group": "M1", "teacher": "Dr. X",
         "period": "2026.09.15 - 2026.12.31",

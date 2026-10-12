@@ -281,6 +281,10 @@ For every course tab, a course seen for the first time is recorded without annou
 whose page cannot be read this time keeps its last results, so a failing page is not reported as things disappearing or
 appearing. Turning a watch off forgets its saved results, so turning it on again starts from a new baseline.
 
+**Links:** each message ends with links to the same place in AZTUSP and on the university site. Absences, individual work
+and course scores link to that course's tab in AZTUSP (`/courses/<lec_open_idx>?tab=attendance`, `tasks` or `scores`),
+and results link to the grades page. Each course's university link is the same tab on the portal.
+
 **Students never send a chat id.** Telegram is connected from the frontend:
 
 1. `POST /api/v1/me/telegram/link` returns a `url` like `https://t.me/<bot>?start=<code>`. Show it as a button.
@@ -316,6 +320,7 @@ Shared settings (in `.env`, used for every student):
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM` | The mail account that sends emails. Port 587 uses STARTTLS, 465 uses SSL |
 | `TELEGRAM_BOT_TOKEN` | Token of the bot. The watcher uses it to answer link messages and send messages |
 | `TELEGRAM_BOT_USERNAME` | The bot's username without `@`. The API uses it to build the link |
+| `FRONTEND_URL` | The AZTUSP site that the links in a message open (default `https://aztu.alakbaroff.com`) |
 
 Set at least one channel. A channel is enabled once any of its variables is set, and a partly filled channel is a
 startup error.

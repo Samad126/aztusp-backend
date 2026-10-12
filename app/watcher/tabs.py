@@ -13,6 +13,7 @@ import requests
 
 from ..scraping import courses
 from ..scraping.client import SiteScraper
+from .links import CourseLink, course_links
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def _read_work(scraper: SiteScraper, course: dict, listing: list[dict]) -> dict 
     except UNREADABLE as exc:
         log.warning("Course %s: individual work not read (%s)", idx, type(exc).__name__)
         return None
-    return {"lec_open_idx": idx, "course": page["course"] or course["name"], "works": page["items"]}
+    return {"lec_open_idx": idx, "course": page["course"] or course["name"], "works": page["items"], "site_url": page["url"]}
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class WorkChange:
     course: str
     work: dict  # the work as it is now
     changed: dict[str, tuple[str | None, str]] | None  # column -> (was, now) for a work that changed; None when it is new
+    link: CourseLink
 
 
 def find_work_changes(previous: list[dict], current: list[dict]) -> list[WorkChange]:
@@ -88,14 +90,15 @@ def find_work_changes(previous: list[dict], current: list[dict]) -> list[WorkCha
         known = before.get(entry["lec_open_idx"])
         if known is None:
             continue
+        link = CourseLink(entry["lec_open_idx"], entry.get("site_url"))
         for work in entry["works"]:
             old = known.get(_work_key(work))
             if old is None:
-                changes.append(WorkChange(entry["course"], work, None))
+                changes.append(WorkChange(entry["course"], work, None, link))
                 continue
             changed = {key: (old.get(key) or None, work[key]) for key in WORK_LABELS if work.get(key) and work[key] != old.get(key)}
             if changed:
-                changes.append(WorkChange(entry["course"], work, changed))
+                changes.append(WorkChange(entry["course"], work, changed, link))
     return changes
 
 
@@ -110,8 +113,8 @@ def _work_key(work: dict) -> str:
     return "content:" + json.dumps(content, sort_keys=True, ensure_ascii=False)
 
 
-def format_work_message(changes: list[WorkChange]) -> tuple[str, str]:
-    """Subject and body naming each course and the works that are new or changed."""
+def format_work_message(changes: list[WorkChange], frontend_url: str) -> tuple[str, str]:
+    """Subject and body naming each course and the works that are new or changed, with links to the tasks tab."""
     by_course = _by_course(changes)
     blocks = []
     for course, items in by_course.items():
@@ -123,6 +126,7 @@ def format_work_message(changes: list[WorkChange]) -> tuple[str, str]:
             else:
                 lines.append("Changed work")
                 lines += [f"  {WORK_LABELS[key]}: {now}" + (f" (was {was})" if was else "") for key, (was, now) in change.changed.items()]
+        lines.append(course_links(frontend_url, items[0].link, "tasks"))
         blocks.append("\n".join(lines))
     return _subject("individual work", by_course), "\n\n".join(blocks)
 
@@ -141,7 +145,13 @@ def _read_scores(scraper: SiteScraper, course: dict, listing: list[dict]) -> dic
     except UNREADABLE as exc:
         log.warning("Course %s: course scores not read (%s)", idx, type(exc).__name__)
         return None
-    return {"lec_open_idx": idx, "course": page["course"] or course["name"], "components": page["components"], "total": page["total"]}
+    return {
+        "lec_open_idx": idx,
+        "course": page["course"] or course["name"],
+        "components": page["components"],
+        "total": page["total"],
+        "site_url": page["url"],
+    }
 
 
 @dataclass(frozen=True)
@@ -151,6 +161,7 @@ class ScoreChange:
     maximum: str | None
     old: str | None  # None when the score was not shown at the last check
     new: str
+    link: CourseLink
 
 
 def find_score_changes(previous: list[dict], current: list[dict]) -> list[ScoreChange]:
@@ -164,18 +175,19 @@ def find_score_changes(previous: list[dict], current: list[dict]) -> list[ScoreC
         known = before.get(entry["lec_open_idx"])
         if known is None:
             continue
+        link = CourseLink(entry["lec_open_idx"], entry.get("site_url"))
         old_scores = {component["name"]: component["score"] for component in known["components"]}
         for component in entry["components"]:
             old, new = old_scores.get(component["name"]), component["score"]
             if new is not None and new != old:
-                changes.append(ScoreChange(entry["course"], component["name"], component["max"], old, new))
+                changes.append(ScoreChange(entry["course"], component["name"], component["max"], old, new, link))
         if entry["total"] is not None and entry["total"] != known["total"]:
-            changes.append(ScoreChange(entry["course"], "Total", None, known["total"], entry["total"]))
+            changes.append(ScoreChange(entry["course"], "Total", None, known["total"], entry["total"], link))
     return changes
 
 
-def format_score_message(changes: list[ScoreChange]) -> tuple[str, str]:
-    """Subject and body naming each course and the scores that changed."""
+def format_score_message(changes: list[ScoreChange], frontend_url: str) -> tuple[str, str]:
+    """Subject and body naming each course and the scores that changed, with links to the scores tab."""
     by_course = _by_course(changes)
     blocks = []
     for course, items in by_course.items():
@@ -186,5 +198,6 @@ def format_score_message(changes: list[ScoreChange]) -> tuple[str, str]:
             if change.old is not None:
                 line += f" (was {change.old})"
             lines.append(line)
+        lines.append(course_links(frontend_url, items[0].link, "scores"))
         blocks.append("\n".join(lines))
     return _subject("course scores", by_course), "\n\n".join(blocks)

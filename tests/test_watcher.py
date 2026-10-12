@@ -22,6 +22,7 @@ from app.watcher import notify as notify_module
 from app.watcher.absences import AbsenceChange, find_absence_changes, format_absence_message, take_absence_snapshot
 from app.watcher.checker import Watcher
 from app.watcher.config import SmtpSettings, WatcherSettings, watched_fields
+from app.watcher.links import CourseLink
 from app.watcher.notify import NotifyError, format_message, send_email, send_telegram
 from app.watcher.results import Change, find_changes, take_snapshot
 from app.watcher.tabs import (
@@ -39,7 +40,15 @@ FIELDS = ("final_score", "grade")
 SEMESTER = "2026 Tədris ili payiz Semestr"
 SETTINGS = Settings("k", "db", "example.com", "https://login.example.com/", "https://d.example.com/app/", "u", "p", 5.0)
 SMTP = SmtpSettings(host="smtp-relay.brevo.com", port=587, username="login@example.com", password="smtp-key", sender="sender@example.com")
-WATCH = WatcherSettings(interval_seconds=1800, smtp=SMTP, telegram_bot_token="123:ABC")
+FRONTEND = "https://app.example.com"
+WATCH = WatcherSettings(interval_seconds=1800, smtp=SMTP, telegram_bot_token="123:ABC", frontend_url=FRONTEND)
+SCORES_PAGE = "https://d.example.com/telebe/score_view.php"
+GRADES_LINKS = f"Open in AZTUSP: {FRONTEND}/grades\nOpen on the university site: {SCORES_PAGE}"
+
+
+def tab_url(page, idx):
+    """The university's address for a course tab, as the course readers return it."""
+    return f"https://d.example.com/studies/{page}.php?lec_open_idx={idx}"
 
 SCORES_HTML = f"""
 <div class="card"><div class="card-body"><h5 class="text-primary">{SEMESTER}</h5>
@@ -104,20 +113,25 @@ def test_find_changes_ignores_unchanged_and_cleared_results():
     assert find_changes(before, take_snapshot(scores_page(row("Algorithms", "", "")), FIELDS), FIELDS) == []
 
 
-def test_format_message_names_the_course_and_the_result():
+def test_format_message_names_the_course_and_the_result_and_links_to_the_grades():
     subject, body = format_message(
-        [Change(SEMESTER, "Algorithms", "final_score", "70", "78"), Change(SEMESTER, "Algorithms", "grade", None, "B")]
+        [Change(SEMESTER, "Algorithms", "final_score", "70", "78"), Change(SEMESTER, "Algorithms", "grade", None, "B")],
+        FRONTEND,
+        SCORES_PAGE,
     )
 
     assert subject == "AZTUSP: result updated for Algorithms"
-    assert body == f"Course: Algorithms\nSemester: {SEMESTER}\nFinal score: 78 (was 70)\nGrade: B"
+    assert body == f"Course: Algorithms\nSemester: {SEMESTER}\nFinal score: 78 (was 70)\nGrade: B\n\n{GRADES_LINKS}"
 
 
 def test_format_message_counts_courses_in_the_subject():
-    subject, body = format_message([Change(SEMESTER, "Algorithms", "grade", None, "B"), Change(SEMESTER, "Databases", "grade", None, "A")])
+    subject, body = format_message(
+        [Change(SEMESTER, "Algorithms", "grade", None, "B"), Change(SEMESTER, "Databases", "grade", None, "A")], FRONTEND, SCORES_PAGE
+    )
 
     assert subject == "AZTUSP: results updated for 2 courses"
     assert "Course: Algorithms" in body and "Course: Databases" in body
+    assert body.endswith(GRADES_LINKS)
 
 
 class FakeResponse:
@@ -220,7 +234,7 @@ def test_notify_reports_a_channel_that_is_not_configured(caplog):
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    for key in ("WATCH_INTERVAL_MINUTES", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "MAIL_FROM", "TELEGRAM_BOT_TOKEN"):
+    for key in ("WATCH_INTERVAL_MINUTES", "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "MAIL_FROM", "TELEGRAM_BOT_TOKEN", "FRONTEND_URL"):
         monkeypatch.delenv(key, raising=False)
     return monkeypatch
 
@@ -233,6 +247,14 @@ def test_defaults_check_every_30_minutes_with_telegram_only(clean_env):
     assert settings.interval_seconds == 1800
     assert settings.smtp is None
     assert settings.telegram_bot_token == "123:ABC"
+
+
+def test_links_open_aztusp_at_its_default_address_or_the_one_given(clean_env):
+    clean_env.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    assert WatcherSettings.from_env().frontend_url == "https://aztu.alakbaroff.com"
+
+    clean_env.setenv("FRONTEND_URL", "https://example.com/aztusp/")
+    assert WatcherSettings.from_env().frontend_url == "https://example.com/aztusp"
 
 
 def test_smtp_sender_defaults_to_the_login(clean_env):
@@ -367,7 +389,7 @@ def test_a_changed_result_goes_to_that_students_channels(portal, sent):
             "student@example.com",
             "42",
             "AZTUSP: result updated for Algorithms",
-            f"Course: Algorithms\nSemester: {SEMESTER}\nFinal score: 78 (was 70)\nGrade: B (was C)",
+            f"Course: Algorithms\nSemester: {SEMESTER}\nFinal score: 78 (was 70)\nGrade: B (was C)\n\n{GRADES_LINKS}",
         )
     ]
 
@@ -498,7 +520,7 @@ def campus(monkeypatch):
         page = journals[scraper.username][lec_open_idx]
         if isinstance(page, Exception):
             raise page
-        return page
+        return {"url": tab_url("lecture_attend", lec_open_idx), **page}
 
     monkeypatch.setattr(absences.courses, "list_courses", lambda scraper: DASHBOARD)
     monkeypatch.setattr(absences.courses, "course_attendance", read)
@@ -544,19 +566,37 @@ def test_new_absences_and_corrections_are_the_only_changes():
     assert find_absence_changes(current, current) == []
 
 
-def test_absence_message_names_the_course_and_each_meeting_that_changed():
-    changes = [AbsenceChange("Math", "2", "22.09", None, "absent"), AbsenceChange("Math", "1", None, "absent", "present")]
+MATH = CourseLink("7", tab_url("lecture_attend", "7"))
+MATH_TAB = f"Open in AZTUSP: {FRONTEND}/courses/7?tab=attendance\nOpen on the university site: {tab_url('lecture_attend', '7')}"
 
-    subject, body = format_absence_message(changes)
+
+def test_absence_message_names_the_course_and_each_meeting_that_changed_and_links_to_the_attendance_tab():
+    changes = [AbsenceChange("Math", "2", "22.09", None, "absent", MATH), AbsenceChange("Math", "1", None, "absent", "present", MATH)]
+
+    subject, body = format_absence_message(changes, FRONTEND)
 
     assert subject == "AZTUSP: attendance updated for Math"
-    assert body == "Course: Math\nSession 2 (22.09): absent\nSession 1: present (was absent)"
+    assert body == f"Course: Math\nSession 2 (22.09): absent\nSession 1: present (was absent)\n{MATH_TAB}"
 
 
 def test_absence_message_counts_courses_in_the_subject():
-    changes = [AbsenceChange("Math", "2", None, None, "absent"), AbsenceChange("Physics", "1", None, None, "absent")]
+    physics = CourseLink("8", tab_url("lecture_attend", "8"))
+    changes = [AbsenceChange("Math", "2", None, None, "absent", MATH), AbsenceChange("Physics", "1", None, None, "absent", physics)]
 
-    assert format_absence_message(changes)[0] == "AZTUSP: attendance updated for 2 courses"
+    subject, body = format_absence_message(changes, FRONTEND)
+
+    assert subject == "AZTUSP: attendance updated for 2 courses"
+    assert f"{FRONTEND}/courses/8?tab=attendance" in body
+
+
+def test_absence_message_keeps_only_the_aztusp_link_for_a_snapshot_saved_before_links():
+    # A course that could not be read at the last run keeps the entry it had before the links were kept.
+    previous = [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "present"}]}]
+    current = [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "absent"}]}]
+
+    body = format_absence_message(find_absence_changes(previous, current), FRONTEND)[1]
+
+    assert body == f"Course: Math\nSession 1: absent (was present)\nOpen in AZTUSP: {FRONTEND}/courses/7?tab=attendance"
 
 
 def test_own_marks_are_read_for_each_course_and_other_students_are_ignored(campus):
@@ -571,13 +611,19 @@ def test_own_marks_are_read_for_each_course_and_other_students_are_ignored(campu
         {
             "lec_open_idx": "7",
             "course": "Math",
+            "site_url": tab_url("lecture_attend", "7"),
             "sessions": [
                 {"number": "1", "date": "15.09", "mark": "present"},
                 {"number": "2", "date": "22.09", "mark": "absent"},
                 {"number": "3", "date": "29.09", "mark": None},
             ],
         },
-        {"lec_open_idx": "8", "course": "Physics", "sessions": [{"number": "1", "date": "16.09", "mark": "absent"}]},
+        {
+            "lec_open_idx": "8",
+            "course": "Physics",
+            "site_url": tab_url("lecture_attend", "8"),
+            "sessions": [{"number": "1", "date": "16.09", "mark": "absent"}],
+        },
     ]
 
 
@@ -611,7 +657,7 @@ def test_a_new_absence_goes_to_that_students_channels(portal, campus, sent):
     campus["M1"]["7"] = journal("Math", ("15.09", "present"), ("22.09", "absent"))
     watcher.check_all()
 
-    assert sent == [("student@example.com", "42", "AZTUSP: attendance updated for Math", "Course: Math\nSession 2 (22.09): absent")]
+    assert sent == [("student@example.com", "42", "AZTUSP: attendance updated for Math", f"Course: Math\nSession 2 (22.09): absent\n{MATH_TAB}")]
 
 
 def test_an_absences_only_student_is_not_read_for_grades(portal, campus, sent):
@@ -690,16 +736,16 @@ def course_tabs(monkeypatch):
     `course_tabs.scores["M1"]["7"]`. A course without a page has an empty tab; an exception in place of a page is raised."""
     pages = SimpleNamespace(work={}, scores={})
 
-    def read(page):
+    def read(page, tab, idx):
         if isinstance(page, Exception):
             raise page
-        return page
+        return {"url": tab_url(tab, idx), **page}
 
     def items(scraper, idx, name, listing=None):
-        return read(pages.work.get(scraper.username, {}).get(idx, {"course": None, "items": []}))
+        return read(pages.work.get(scraper.username, {}).get(idx, {"course": None, "items": []}), "lecture_task", idx)
 
     def scores(scraper, idx, listing=None):
-        return read(pages.scores.get(scraper.username, {}).get(idx, {"course": None, "components": [], "total": None}))
+        return read(pages.scores.get(scraper.username, {}).get(idx, {"course": None, "components": [], "total": None}), "lecture_score", idx)
 
     monkeypatch.setattr(absences.courses, "list_courses", lambda scraper: DASHBOARD)
     monkeypatch.setattr(absences.courses, "course_items", items)
@@ -717,8 +763,8 @@ def test_work_snapshot_lists_every_work_of_each_course(course_tabs):
     course_tabs.work["M1"] = {"7": {"course": "Math", "items": [work()]}, "8": {"course": "Physics", "items": []}}
 
     assert take_work_snapshot(SimpleNamespace(username="M1"), []) == [
-        {"lec_open_idx": "7", "course": "Math", "works": [work()]},
-        {"lec_open_idx": "8", "course": "Physics", "works": []},
+        {"lec_open_idx": "7", "course": "Math", "works": [work()], "site_url": tab_url("lecture_task", "7")},
+        {"lec_open_idx": "8", "course": "Physics", "works": [], "site_url": tab_url("lecture_task", "8")},
     ]
 
 
@@ -752,18 +798,20 @@ def test_a_course_seen_for_the_first_time_is_recorded_not_announced():
     assert find_absence_changes([], [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "absent"}]}]) == []
 
 
-def test_a_work_message_names_each_new_and_changed_work():
+def test_a_work_message_names_each_new_and_changed_work_and_links_to_the_tasks_tab():
+    link = CourseLink("7", tab_url("lecture_task", "7"))
     changes = [
-        WorkChange("Math", work(), None),
-        WorkChange("Math", work(end="03.11.2026"), {"end_date": ("27.10.2026", "03.11.2026")}),
+        WorkChange("Math", work(), None, link),
+        WorkChange("Math", work(end="03.11.2026"), {"end_date": ("27.10.2026", "03.11.2026")}, link),
     ]
 
-    subject, body = format_work_message(changes)
+    subject, body = format_work_message(changes, FRONTEND)
 
     assert subject == "AZTUSP: individual work updated for Math"
     assert body == (
         "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
-        "Changed work\n  End: 03.11.2026 (was 27.10.2026)"
+        "Changed work\n  End: 03.11.2026 (was 27.10.2026)\n"
+        f"Open in AZTUSP: {FRONTEND}/courses/7?tab=tasks\nOpen on the university site: {tab_url('lecture_task', '7')}"
     )
 
 
@@ -772,15 +820,24 @@ def test_a_course_that_cannot_be_read_keeps_its_work(course_tabs):
     course_tabs.work["M1"] = {"7": requests.ConnectionError("portal slow")}
 
     # Course 7 keeps its last entry; course 8 has no page here, so it is read as an empty tab.
-    assert take_work_snapshot(SimpleNamespace(username="M1"), last) == [last[0], {"lec_open_idx": "8", "course": "Physics [M1]", "works": []}]
+    assert take_work_snapshot(SimpleNamespace(username="M1"), last) == [
+        last[0],
+        {"lec_open_idx": "8", "course": "Physics [M1]", "works": [], "site_url": tab_url("lecture_task", "8")},
+    ]
 
 
 def test_score_snapshot_keeps_each_component_and_the_total(course_tabs):
     course_tabs.scores["M1"] = {"7": {"course": "Math", "components": [component("sərbəst iş", "10", "5")], "total": "5"}}
 
     assert take_score_snapshot(SimpleNamespace(username="M1"), []) == [
-        {"lec_open_idx": "7", "course": "Math", "components": [component("sərbəst iş", "10", "5")], "total": "5"},
-        {"lec_open_idx": "8", "course": "Physics [M1]", "components": [], "total": None},
+        {
+            "lec_open_idx": "7",
+            "course": "Math",
+            "components": [component("sərbəst iş", "10", "5")],
+            "total": "5",
+            "site_url": tab_url("lecture_score", "7"),
+        },
+        {"lec_open_idx": "8", "course": "Physics [M1]", "components": [], "total": None, "site_url": tab_url("lecture_score", "8")},
     ]
 
 
@@ -805,21 +862,32 @@ def test_changed_scores_and_total_are_reported_but_a_score_that_disappears_is_no
 
 
 def test_a_score_that_was_empty_and_now_shows_zero_is_reported():
-    empty = [{"lec_open_idx": "7", "course": "Math", "components": [component("Davamiyyət", None, None)], "total": None}]
-    zero = [{"lec_open_idx": "7", "course": "Math", "components": [component("Davamiyyət", None, "0")], "total": None}]
+    link = CourseLink("7", tab_url("lecture_score", "7"))
+    empty = [{"lec_open_idx": "7", "course": "Math", "components": [component("Davamiyyət", None, None)], "total": None, "site_url": link.site_url}]
+    zero = [{"lec_open_idx": "7", "course": "Math", "components": [component("Davamiyyət", None, "0")], "total": None, "site_url": link.site_url}]
 
-    assert find_score_changes(empty, zero) == [ScoreChange("Math", "Davamiyyət", None, None, "0")]
-    assert format_score_message(find_score_changes(empty, zero))[1] == "Course: Math\nDavamiyyət: 0"
+    assert find_score_changes(empty, zero) == [ScoreChange("Math", "Davamiyyət", None, None, "0", link)]
+    assert format_score_message(find_score_changes(empty, zero), FRONTEND)[1] == (
+        f"Course: Math\nDavamiyyət: 0\nOpen in AZTUSP: {FRONTEND}/courses/7?tab=scores\nOpen on the university site: {link.site_url}"
+    )
     assert find_score_changes(empty, empty) == []
 
 
 def test_a_score_message_names_the_course_and_each_score_that_changed():
-    changes = [ScoreChange("Math", "sərbəst iş", "10", "5", "7"), ScoreChange("Math", "Məşğələ", "30", None, "12"), ScoreChange("Math", "Total", None, "7", "9")]
+    link = CourseLink("7", tab_url("lecture_score", "7"))
+    changes = [
+        ScoreChange("Math", "sərbəst iş", "10", "5", "7", link),
+        ScoreChange("Math", "Məşğələ", "30", None, "12", link),
+        ScoreChange("Math", "Total", None, "7", "9", link),
+    ]
 
-    subject, body = format_score_message(changes)
+    subject, body = format_score_message(changes, FRONTEND)
 
     assert subject == "AZTUSP: course scores updated for Math"
-    assert body == "Course: Math\nsərbəst iş (of 10): 7 (was 5)\nMəşğələ (of 30): 12\nTotal: 9 (was 7)"
+    assert body == (
+        "Course: Math\nsərbəst iş (of 10): 7 (was 5)\nMəşğələ (of 30): 12\nTotal: 9 (was 7)\n"
+        f"Open in AZTUSP: {FRONTEND}/courses/7?tab=scores\nOpen on the university site: {link.site_url}"
+    )
 
 
 def test_a_new_individual_work_goes_to_that_students_channels(portal, course_tabs, sent):
@@ -835,7 +903,8 @@ def test_a_new_individual_work_goes_to_that_students_channels(portal, course_tab
             "student@example.com",
             "42",
             "AZTUSP: individual work updated for Math",
-            "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026",
+            "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
+            f"Open in AZTUSP: {FRONTEND}/courses/7?tab=tasks\nOpen on the university site: {tab_url('lecture_task', '7')}",
         )
     ]
 
@@ -849,7 +918,11 @@ def test_a_changed_course_score_goes_to_that_students_channels(portal, course_ta
     watcher.check_all()
 
     assert [(subject, body) for _, _, subject, body in sent] == [
-        ("AZTUSP: course scores updated for Math", "Course: Math\nsərbəst iş (of 10): 7 (was 5)\nTotal: 7 (was 5)")
+        (
+            "AZTUSP: course scores updated for Math",
+            "Course: Math\nsərbəst iş (of 10): 7 (was 5)\nTotal: 7 (was 5)\n"
+            f"Open in AZTUSP: {FRONTEND}/courses/7?tab=scores\nOpen on the university site: {tab_url('lecture_score', '7')}",
+        )
     ]
 
 

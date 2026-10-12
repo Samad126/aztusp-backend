@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urljoin
 
 from ..config import Settings
 from ..db import Subscription, UserStore
@@ -34,7 +35,7 @@ class CourseWatch:
     flag: str  # the notification setting that turns it on
     take: Callable[[SiteScraper, list[dict]], list[dict]]
     changes: Callable[[list[dict], list[dict]], list]
-    message: Callable[[list], tuple[str, str]]
+    message: Callable[[list, str], tuple[str, str]]  # (changes, frontend_url) -> subject, body
 
 
 COURSE_WATCHES = (
@@ -106,7 +107,8 @@ class Watcher:
 
         changes = find_changes(saved["courses"], current, fields)
         if changes:
-            subject, body = format_message(changes)
+            site_url = urljoin(self.settings.dashboard_url, SCORES.path)
+            subject, body = format_message(changes, self.watcher_settings.frontend_url, site_url)
             notify(self.watcher_settings, subscription.notifications.email, subscription.telegram_chat_id, subject, body)
         log.info("User %s: checked %d courses, %d changed", user_id, len(current), len(changes))
         # Saved even when a channel failed: the failure is logged, and a retry would re-send to the channels that worked.
@@ -130,7 +132,7 @@ class Watcher:
 
         changes = watch.changes(previous, current)
         if changes:
-            subject, body = watch.message(changes)
+            subject, body = watch.message(changes, self.watcher_settings.frontend_url)
             notify(self.watcher_settings, subscription.notifications.email, subscription.telegram_chat_id, subject, body)
         log.info("User %s: checked %s in %d courses, %d changed", user_id, watch.name, len(current), len(changes))
         self.store.save_course_snapshot(user_id, watch.name, {"courses": current})
