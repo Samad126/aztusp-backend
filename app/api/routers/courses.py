@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
+from fastapi.responses import StreamingResponse
 
-from ...schemas import Course, CourseAttendance, CourseItems, CourseScores, Detail, LecturePlan
-from ...scraping import courses
+from ...schemas import Course, CourseAttendance, CourseItems, CourseScores, Detail, LecturePlan, MaterialDetail
+from ...scraping import courses, materials
 from ...scraping.client import SiteScraper
 from ..deps import current_scraper
 from ..errors import SITE_DOWN, UNAUTHORIZED
+from ..files import file_response
 
 router = APIRouter(prefix="/courses", tags=["Courses"])
 
@@ -90,3 +92,45 @@ def course_scores(lec_open_idx: str = LEC_OPEN_IDX, scraper: SiteScraper = Depen
 def course_attendance(lec_open_idx: str = LEC_OPEN_IDX, scraper: SiteScraper = Depends(current_scraper)):
     """Attendance journal: one entry per class meeting, with the attendance score and percentage."""
     return courses.course_attendance(scraper, lec_open_idx)
+
+
+MATERIAL_ID = Path(pattern=r"^\d{1,12}$", description="Material `id` from a course's `materials` list.")
+
+
+@router.get(
+    "/materials/{material_id}",
+    summary="Read one course material (Didaktik materiallar)",
+    response_model=MaterialDetail,
+    responses={**UNAUTHORIZED, 404: {"model": Detail, "description": "No material with that id."}, **SITE_DOWN},
+)
+def read_material(request: Request, material_id: str = MATERIAL_ID, scraper: SiteScraper = Depends(current_scraper)):
+    """The material as the site shows it when a row of the materials list is opened: subject, date, views, files and text."""
+    material = materials.material_detail(scraper, material_id)
+    for attachment in material["attachments"]:
+        if attachment["file_no"].isdigit():
+            attachment["download"] = request.app.url_path_for(
+                "download_material_file", material_id=material_id, file_no=attachment["file_no"]
+            )
+    return material
+
+
+@router.get(
+    "/materials/{material_id}/files/{file_no}",
+    summary="Download a course material's file (Qoşma)",
+    name="download_material_file",
+    response_class=StreamingResponse,
+    responses={
+        200: {"description": "The file.", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+        **UNAUTHORIZED,
+        404: {"model": Detail, "description": "The material has no such file."},
+        **SITE_DOWN,
+    },
+)
+def download_material_file(
+    material_id: str = MATERIAL_ID,
+    file_no: str = Path(pattern=r"^[1-9]\d{0,2}$", description="`file_no` from the material's `attachments`."),
+    scraper: SiteScraper = Depends(current_scraper),
+):
+    """Streams the file through the API, so the frontend does not need the site session."""
+    upstream, filename = materials.open_material_file(scraper, material_id, file_no)
+    return file_response(upstream, filename)

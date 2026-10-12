@@ -60,8 +60,12 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/courses/{lec_open_idx}/tasks` | ✔ | Course assessments and assignments (Qiymətləndirmə) |
 | `GET` | `/api/v1/courses/{lec_open_idx}/scores` | ✔ | Current points per component and the total |
 | `GET` | `/api/v1/courses/{lec_open_idx}/attendance` | ✔ | Attendance journal: per-class marks, score and percentage |
+| `GET` | `/api/v1/courses/materials/{material_id}` | ✔ | One course material (Didaktik materiallar): subject, date, views, files and text |
+| `GET` | `/api/v1/courses/materials/{material_id}/files/{file_no}` | ✔ | Download a material's file (Qoşma) |
 
 The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows keyed in English (`subject`, `author`, `date`, `views`, ...), plus `id` when the row opens a detail view and `link` for its first link. An empty `items` means nothing was posted. `scores` returns the table as shown (`table`, every cell kept), the same split into `components` (name, max, score) and the `total`. `attendance` returns `info`, the mark `legend`, `header` values, the class `sessions` (dates) and every `students` row with one mark per class.
+
+`GET /api/v1/courses/materials/{material_id}` takes the `id` of a materials row and returns the material as the site shows it when the row is opened: `subject`, `author` (when the site shows one), `date`, `views`, `attachments` and `body`. Each attachment has a `download` path for its file, sent with the same `Authorization` header. `body` is the plain text, with line breaks kept; bold and list formatting are dropped. Opening a material counts as a view on the university site, as it does there. An unknown id is `404`.
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 
@@ -201,6 +205,7 @@ app/
     deps.py          settings, user store and per-request authenticated scraper
     errors.py        exception -> HTTP status handlers, shared error responses
     routers/         auth, me (profile/scores/...), notifications, telegram, courses, system (health)
+    files.py         streams a university file through the API as a download
   scraping/
     client.py        portal login and logout, session handling, redirects
     cookies.py       shares session cookies across portal subdomains
@@ -208,6 +213,7 @@ app/
     targets.py       what to scrape (CSS selectors) and the field-name translations
     courses.py       course list and lecture plan scraping
     notices.py       notice detail and attachment download
+    materials.py     course material detail (text and files) and file download
     password_form.py password change on the university SSO site
   timetable/         fallback timetable from the channel's PDFs
     service.py       university timetable, or the channel's when the university has none

@@ -10,6 +10,7 @@ from requests import RequestException
 from ..schemas import Detail
 from ..scraping.client import LoginError
 from ..scraping.courses import CourseNotFound
+from ..scraping.materials import MaterialNotFound
 from ..scraping.notices import FileNotFound, NoticeNotFound
 from ..scraping.password_form import PasswordFormNotFound
 
@@ -41,6 +42,10 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(NoticeNotFound)
     async def notice_not_found(request: Request, exc: NoticeNotFound):
+        return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(MaterialNotFound)
+    async def material_not_found(request: Request, exc: MaterialNotFound):
         return JSONResponse({"detail": str(exc)}, status_code=404)
 
     @app.exception_handler(FileNotFound)

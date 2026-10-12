@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import Response, StreamingResponse
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from ...db import User, UserStore
@@ -23,6 +22,7 @@ from ...timetable import service as timetable
 from ...timetable.config import TimetableSource
 from ..deps import current_scraper, current_user, get_store, get_timetable_source
 from ..errors import SITE_DOWN, UNAUTHORIZED
+from ..files import file_response
 
 router = APIRouter(prefix="/me", tags=["My data"])
 
@@ -127,15 +127,7 @@ def download_notice_file(
 ):
     """Streams the attachment through the API, so the frontend does not need the site session."""
     upstream, filename = notices.open_notice_file(scraper, notice_id, file_no)
-    headers = {"Content-Disposition": notices.content_disposition(filename)}
-    if "Content-Length" in upstream.headers:
-        headers["Content-Length"] = upstream.headers["Content-Length"]
-    return StreamingResponse(
-        upstream.iter_content(chunk_size=65536),
-        media_type=upstream.headers.get("Content-Type", "application/octet-stream"),
-        headers=headers,
-        background=BackgroundTask(upstream.close),
-    )
+    return file_response(upstream, filename)
 
 
 @router.post(

@@ -415,10 +415,10 @@ class LecturePlan(BaseModel):
     blocks: list[PlanBlock] = Field(description="Sections of the plan, in page order.")
 
 
-class NoticeAttachment(BaseModel):
+class Attachment(BaseModel):
     name: str
     url: str = Field(description="Link on the university site. It needs the site session, so use `download` instead.")
-    file_no: str = Field("", description="File number within the notice (`wr_fno`).")
+    file_no: str = Field("", description="File number within the notice or material (`wr_fno`).")
     download: str = Field("", description="API path that downloads the file, e.g. `/api/v1/me/notices/34/files/1`. Send the same `Authorization` header.")
 
 
@@ -429,8 +429,18 @@ class NoticeDetail(BaseModel):
     author: str = ""
     created_at: str = Field("", description="e.g. `2020-12-13 22:15:12`.")
     views: str = Field("", description="`Müraciətlərin sayı`.")
-    attachments: list[NoticeAttachment] = Field([], description="Files attached to the notice (`Qoşma fayl`).")
+    attachments: list[Attachment] = Field([], description="Files attached to the notice (`Qoşma fayl`).")
     body: str = Field("", description="Message text, with line breaks kept.")
+
+
+class MaterialDetail(BaseModel):
+    id: str = Field(description="Material id: the `id` of a row in a course's `materials` list.")
+    subject: str = Field(description="`Movzu`.")
+    author: str = Field("", description="`Müəllif`, when the site shows it.")
+    date: str = Field("", description="`Tarix`, e.g. `2026-10-13 00:36:40`.")
+    views: str = Field("", description="`Müraciətlərin sayı`. Opening the material counts as a view, as it does on the site.")
+    attachments: list[Attachment] = Field([], description="Files attached to the material (`Qoşma`).")
+    body: str = Field("", description="Text of the material, with line breaks kept.")
 
 
 # --- /me/password -----------------------------------------------------------------------

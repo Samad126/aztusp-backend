@@ -13,8 +13,10 @@ from app.config import Settings
 from app.db import UserStore
 from app.main import app
 from app.photos import MAX_PHOTO_BYTES
-from app.scraping import courses, password_form
+from app.scraping import courses, materials, password_form
 from app.scraping.client import LoginError, SiteScraper
+from app.scraping.materials import MaterialNotFound
+from app.scraping.notices import FileNotFound
 
 DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL not set")
@@ -129,6 +131,64 @@ def test_course_scores_and_attendance(client):
     assert attendance["students"][0]["marks"][0]["mark"] == "present" and attendance["header"]["percent"] == "100%"
 
 
+class UpstreamFile:
+    headers = {"Content-Type": "application/pdf", "Content-Length": "5"}
+
+    def iter_content(self, chunk_size):
+        yield b"%PDF-"
+
+    def close(self):
+        self.closed = True
+
+
+def test_course_material_and_its_file(client, monkeypatch):
+    seen = []
+
+    def material_detail(scraper, material_id):
+        seen.append(material_id)
+        return {
+            "id": material_id,
+            "subject": "Week 5",
+            "author": "",
+            "date": "2026-10-13 00:36:40",
+            "views": "4",
+            "attachments": [
+                {"name": "Slides.pdf", "url": "https://d.example.com/s", "file_no": "1"},
+                {"name": "Link", "url": "https://d.example.com/l", "file_no": ""},
+            ],
+            "body": "Read it.",
+        }
+
+    monkeypatch.setattr(materials, "material_detail", material_detail)
+    monkeypatch.setattr(materials, "open_material_file", lambda scraper, material_id, file_no: (UpstreamFile(), "Slides.pdf"))
+    headers = login(client)
+
+    material = client.get("/api/v1/courses/materials/99287", headers=headers)
+    assert material.status_code == 200 and seen == ["99287"]
+    first, link = material.json()["attachments"]
+    assert first["download"] == "/api/v1/courses/materials/99287/files/1"
+    assert link["download"] == ""
+
+    file = client.get(first["download"], headers=headers)
+    assert file.status_code == 200 and file.content == b"%PDF-"
+    assert file.headers["content-type"] == "application/pdf" and 'filename="Slides.pdf"' in file.headers["content-disposition"]
+
+
+def test_course_material_errors(client, monkeypatch):
+    def missing(scraper, material_id):
+        raise MaterialNotFound(f"No material with id {material_id}")
+
+    def no_file(scraper, material_id, file_no):
+        raise FileNotFound(f"No file {file_no} for {material_id}")
+
+    headers = login(client)
+    monkeypatch.setattr(materials, "material_detail", missing)
+    monkeypatch.setattr(materials, "open_material_file", no_file)
+    assert client.get("/api/v1/courses/materials/99287", headers=headers).status_code == 404
+    assert client.get("/api/v1/courses/materials/99287/files/9", headers=headers).status_code == 404
+    assert client.get("/api/v1/courses/materials/abc", headers=headers).status_code == 422
+
+
 def test_expired_site_session_is_401(client, monkeypatch):
     headers = login(client)
     monkeypatch.setattr(SiteScraper, "scrape", lambda self, target: (_ for _ in ()).throw(LoginError("Site session expired")))
@@ -162,7 +222,7 @@ def test_logout_ends_the_session_when_the_university_site_is_down(client, monkey
     assert client.get("/api/v1/me/scores", headers=headers).status_code == 401
 
 
-@pytest.mark.parametrize("path", ["/api/v1/me/scores", "/api/v1/courses", "/api/v1/courses/1/plan"])
+@pytest.mark.parametrize("path", ["/api/v1/me/scores", "/api/v1/courses", "/api/v1/courses/1/plan", "/api/v1/courses/materials/1"])
 def test_protected_routes_require_token(client, path):
     assert client.get(path).status_code == 401
 
