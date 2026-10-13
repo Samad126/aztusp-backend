@@ -1,6 +1,6 @@
 """The course tabs the watcher reads besides attendance: individual work (Qiymətləndirmə) and course scores (Cari müvəffəqiyyət).
 
-Each tab is read for every course on the dashboard, the same way as the absence marks (see absences.py). A course seen
+Each tab is read for every course on the dashboard, the same way as the attendance marks (see attendance.py). A course seen
 for the first time is recorded without announcing what it already holds, so turning a watch on starts from a baseline.
 """
 

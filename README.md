@@ -16,7 +16,7 @@ pages, and returns structured data with English field names.
    to the portal and returns an API token, which lasts 1 day.
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
-4. Students can also turn on change notifications, so they get a message when a watched result, absence, individual work or course score changes. See [Grade watcher](#grade-watcher).
+4. Students can also turn on change notifications, so they get a message when a watched result, attendance, individual work or course score changes. See [Grade watcher](#grade-watcher).
 5. `POST /api/v1/auth/logout` signs out of the university site too and ends the API session. Saved data is kept, so change notifications keep running.
 
 ### Privacy and security
@@ -46,7 +46,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
-| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields and absences, status of the last check |
+| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields and attendance, status of the last check |
 | `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them, with the password saved at login |
 | `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved results |
 | `GET` | `/api/v1/me/telegram` | ✔ | Whether a Telegram chat is connected |
@@ -221,13 +221,13 @@ app/
     pdf.py           reads one group's lessons from a timetable PDF (one page per group), as list rows and as a grid
     config.py        channel and Telegram session settings
     login.py         one-time sign in that prints the session string
-  watcher/           grade and absence watcher (python -m app.watcher)
+  watcher/           grade and attendance watcher (python -m app.watcher)
     __main__.py      the loop, --once and the test flags
-    checker.py       one check per student: sign in, read scores and absence marks, compare, notify
+    checker.py       one check per student: sign in, read scores and attendance marks, compare, notify
     notify.py        email (SMTP) and Telegram messages
     telegram.py      connects chats from /start <code> messages
     results.py       picks the watched fields and finds changes
-    absences.py      reads the student's marks in each attendance journal and finds new absences
+    attendance.py    reads the student's marks in each attendance journal and finds the marks that became absent or present
     tabs.py          individual work and course score tabs: reads them and finds what changed
     config.py        shared watcher settings
 tests/               pytest suite
@@ -268,16 +268,16 @@ What a student can watch (`PUT /api/v1/me/notifications`):
 | Field | Watches | Message names |
 |---|---|---|
 | `fields` | Scores page: `final_score` and `grade` (always together) | The course, the semester and the new result |
-| `absences` | Attendance journal (Davamiyyət): each class meeting of the student | The course and each meeting that changed |
+| `attendance` | Attendance journal (Davamiyyət): each class meeting of the student, when it is marked absent or present | The course and each meeting that changed |
 | `individual_work` | Individual work (Qiymətləndirmə tab): a new work, or a change to its type, topic, evaluation or dates | The course and each work that changed |
 | `course_scores` | Current course scores (Cari müvəffəqiyyət tab): each component and the total | The course and each score that changed |
 
 `fields` accepts `final_score` and `grade`. Choosing either one watches both. Course type, credits and retake are no
 longer offered: saved settings that name them are read back without them. At least one of the four must be on.
 
-**Absence marks:** the watcher reports a meeting newly marked absent (`q/b`), including one that was still blank, and an
-absence the site changes to present. Entering a meeting as present is not sent. Messages look like
-`Session 3 (22.09): absent (was not entered)`.
+**Attendance marks:** the watcher reports a meeting whose mark becomes absent (`q/b`) or present (`i/e`), including one that was
+blank or not entered before. A mark that stays the same is not sent, and neither is a meeting going back to blank. Messages look like
+`Session 3 (22.09): absent (was not entered)` or `Session 4 (06.10): present`.
 
 **Individual work and course scores:** the individual work's detail id (the row's `send_view` id) identifies it across
 checks. A work without one is matched by its content, so renumbering doesn't count as a change, but editing such a work
@@ -287,7 +287,7 @@ For every course tab, a course seen for the first time is recorded without annou
 whose page cannot be read this time keeps its last results, so a failing page is not reported as things disappearing or
 appearing. Turning a watch off forgets its saved results, so turning it on again starts from a new baseline.
 
-**Links:** each message ends with links to the same place in AZTUSP and on the university site. Absences, individual work
+**Links:** each message ends with links to the same place in AZTUSP and on the university site. Attendance, individual work
 and course scores link to that course's tab in AZTUSP (`/courses/<lec_open_idx>?tab=attendance`, `tasks` or `scores`),
 and results link to the grades page. Each course's university link is the same tab on the portal.
 

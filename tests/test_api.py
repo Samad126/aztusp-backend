@@ -298,11 +298,11 @@ def test_invalid_notification_settings_are_rejected(client, change):
 def test_absence_marks_can_be_watched_without_result_fields(client):
     headers = login(client)
 
-    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "fields": [], "absences": True}, headers=headers)
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "fields": [], "attendance": True}, headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["absences"] is True and response.json()["fields"] == []
-    assert client.get("/api/v1/me/notifications", headers=headers).json()["absences"] is True
+    assert response.json()["attendance"] is True and response.json()["fields"] == []
+    assert client.get("/api/v1/me/notifications", headers=headers).json()["attendance"] is True
 
 
 def test_individual_work_and_course_scores_are_saved_and_read_back(client):
@@ -313,7 +313,7 @@ def test_individual_work_and_course_scores_are_saved_and_read_back(client):
 
     assert response.status_code == 200
     body = response.json()
-    assert (body["individual_work"], body["course_scores"], body["absences"]) == (True, True, False)
+    assert (body["individual_work"], body["course_scores"], body["attendance"]) == (True, True, False)
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
 
 

@@ -17,9 +17,9 @@ from app.db import Notifications, Subscription, UserStore
 from app.schemas import NotificationsIn, NotificationsOut
 from app.scraping.client import BadCredentials, SiteScraper
 from app.scraping.targets import TARGETS_BY_NAME
-from app.watcher import absences, checker
+from app.watcher import attendance, checker
 from app.watcher import notify as notify_module
-from app.watcher.absences import AbsenceChange, find_absence_changes, format_absence_message, take_absence_snapshot
+from app.watcher.attendance import AttendanceChange, find_attendance_changes, format_attendance_message, take_attendance_snapshot
 from app.watcher.checker import Watcher
 from app.watcher.config import SmtpSettings, WatcherSettings, watched_fields
 from app.watcher.links import CourseLink
@@ -318,7 +318,7 @@ def subscription(
     status="ok",
     email="student@example.com",
     chat="42",
-    absences=False,
+    attendance=False,
     individual_work=False,
     course_scores=False,
 ):
@@ -327,7 +327,7 @@ def subscription(
         list(fields),
         status,
         telegram_linked=chat is not None,
-        absences=absences,
+        attendance=attendance,
         individual_work=individual_work,
         course_scores=course_scores,
     )
@@ -522,12 +522,12 @@ def campus(monkeypatch):
             raise page
         return {"url": tab_url("lecture_attend", lec_open_idx), **page}
 
-    monkeypatch.setattr(absences.courses, "list_courses", lambda scraper: DASHBOARD)
-    monkeypatch.setattr(absences.courses, "course_attendance", read)
+    monkeypatch.setattr(attendance.courses, "list_courses", lambda scraper: DASHBOARD)
+    monkeypatch.setattr(attendance.courses, "course_attendance", read)
     return journals
 
 
-def test_new_absences_and_corrections_are_the_only_changes():
+def test_marks_that_become_absent_or_present_are_the_changes():
     previous = [
         {
             "lec_open_idx": "7",
@@ -537,6 +537,7 @@ def test_new_absences_and_corrections_are_the_only_changes():
                 {"number": "2", "date": "22.09", "mark": "absent"},
                 {"number": "3", "date": "29.09", "mark": "not_entered"},
                 {"number": "4", "date": "06.10", "mark": None},
+                {"number": "7", "date": "27.10", "mark": "present"},
             ],
         }
     ]
@@ -548,22 +549,25 @@ def test_new_absences_and_corrections_are_the_only_changes():
                 {"number": "1", "date": "15.09", "mark": "absent"},  # present -> absent
                 {"number": "2", "date": "22.09", "mark": "present"},  # absent -> present, a correction
                 {"number": "3", "date": "29.09", "mark": "absent"},  # not entered -> absent
-                {"number": "4", "date": "06.10", "mark": "present"},  # blank -> present: not reported
+                {"number": "4", "date": "06.10", "mark": "present"},  # blank -> present
                 {"number": "5", "date": "13.10", "mark": "absent"},  # a new meeting, absent
-                {"number": "6", "date": "20.10", "mark": "present"},  # a new meeting, present: not reported
+                {"number": "6", "date": "20.10", "mark": "present"},  # a new meeting, present
+                {"number": "7", "date": "27.10", "mark": "present"},  # present stays present: not reported
             ],
         }
     ]
 
-    changes = find_absence_changes(previous, current)
+    changes = find_attendance_changes(previous, current)
 
     assert [(c.session, c.old, c.new) for c in changes] == [
         ("1", "present", "absent"),
         ("2", "absent", "present"),
         ("3", "not_entered", "absent"),
+        ("4", None, "present"),
         ("5", None, "absent"),
+        ("6", None, "present"),
     ]
-    assert find_absence_changes(current, current) == []
+    assert find_attendance_changes(current, current) == []
 
 
 MATH = CourseLink("7", tab_url("lecture_attend", "7"))
@@ -571,9 +575,9 @@ MATH_TAB = f"Open in AZTUSP: {FRONTEND}/courses/7?tab=attendance\nOpen on the un
 
 
 def test_absence_message_names_the_course_and_each_meeting_that_changed_and_links_to_the_attendance_tab():
-    changes = [AbsenceChange("Math", "2", "22.09", None, "absent", MATH), AbsenceChange("Math", "1", None, "absent", "present", MATH)]
+    changes = [AttendanceChange("Math", "2", "22.09", None, "absent", MATH), AttendanceChange("Math", "1", None, "absent", "present", MATH)]
 
-    subject, body = format_absence_message(changes, FRONTEND)
+    subject, body = format_attendance_message(changes, FRONTEND)
 
     assert subject == "AZTUSP: attendance updated for Math"
     assert body == f"Course: Math\nSession 2 (22.09): absent\nSession 1: present (was absent)\n{MATH_TAB}"
@@ -581,12 +585,21 @@ def test_absence_message_names_the_course_and_each_meeting_that_changed_and_link
 
 def test_absence_message_counts_courses_in_the_subject():
     physics = CourseLink("8", tab_url("lecture_attend", "8"))
-    changes = [AbsenceChange("Math", "2", None, None, "absent", MATH), AbsenceChange("Physics", "1", None, None, "absent", physics)]
+    changes = [AttendanceChange("Math", "2", None, None, "absent", MATH), AttendanceChange("Physics", "1", None, None, "absent", physics)]
 
-    subject, body = format_absence_message(changes, FRONTEND)
+    subject, body = format_attendance_message(changes, FRONTEND)
 
     assert subject == "AZTUSP: attendance updated for 2 courses"
     assert f"{FRONTEND}/courses/8?tab=attendance" in body
+
+
+def test_present_message_for_a_meeting_with_no_earlier_mark_says_only_present():
+    changes = [AttendanceChange("Math", "4", "06.10", None, "present", MATH)]
+
+    subject, body = format_attendance_message(changes, FRONTEND)
+
+    assert subject == "AZTUSP: attendance updated for Math"
+    assert body == f"Course: Math\nSession 4 (06.10): present\n{MATH_TAB}"
 
 
 def test_absence_message_keeps_only_the_aztusp_link_for_a_snapshot_saved_before_links():
@@ -594,7 +607,7 @@ def test_absence_message_keeps_only_the_aztusp_link_for_a_snapshot_saved_before_
     previous = [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "present"}]}]
     current = [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "absent"}]}]
 
-    body = format_absence_message(find_absence_changes(previous, current), FRONTEND)[1]
+    body = format_attendance_message(find_attendance_changes(previous, current), FRONTEND)[1]
 
     assert body == f"Course: Math\nSession 1: absent (was present)\nOpen in AZTUSP: {FRONTEND}/courses/7?tab=attendance"
 
@@ -605,7 +618,7 @@ def test_own_marks_are_read_for_each_course_and_other_students_are_ignored(campu
         "8": journal("Physics", ("16.09", "absent"), student="m1"),
     }
 
-    snapshot = take_absence_snapshot(SimpleNamespace(username="M1"), [])
+    snapshot = take_attendance_snapshot(SimpleNamespace(username="M1"), [])
 
     assert snapshot == [
         {
@@ -635,23 +648,23 @@ def test_a_course_that_cannot_be_read_keeps_its_last_marks(campus):
     ]
     campus["M1"] = {"7": requests.ConnectionError("portal slow"), "8": journal("Physics", ("16.09", "present"), student="S9")}
 
-    assert take_absence_snapshot(SimpleNamespace(username="M1"), last) == last[:2]
+    assert take_attendance_snapshot(SimpleNamespace(username="M1"), last) == last[:2]
 
 
 def test_first_absence_check_saves_the_marks_without_notifying(portal, campus, sent):
     campus["M1"] = {"7": journal("Math", ("15.09", "absent")), "8": journal("Physics", ("16.09", "present"))}
-    store = FakeStore([subscription(1, fields=(), absences=True)])
+    store = FakeStore([subscription(1, fields=(), attendance=True)])
 
     Watcher(SETTINGS, WATCH, store).check_all()
 
     assert sent == []
-    assert store.course_snapshots[(1, "absences")]["courses"][0]["sessions"] == [{"number": "1", "date": "15.09", "mark": "absent"}]
+    assert store.course_snapshots[(1, "attendance")]["courses"][0]["sessions"] == [{"number": "1", "date": "15.09", "mark": "absent"}]
     assert store.statuses[1] == "ok"
 
 
 def test_a_new_absence_goes_to_that_students_channels(portal, campus, sent):
     campus["M1"] = {"7": journal("Math", ("15.09", "present")), "8": journal("Physics", ("16.09", "present"))}
-    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), absences=True)]))
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), attendance=True)]))
     watcher.check_all()
 
     campus["M1"]["7"] = journal("Math", ("15.09", "present"), ("22.09", "absent"))
@@ -660,10 +673,21 @@ def test_a_new_absence_goes_to_that_students_channels(portal, campus, sent):
     assert sent == [("student@example.com", "42", "AZTUSP: attendance updated for Math", f"Course: Math\nSession 2 (22.09): absent\n{MATH_TAB}")]
 
 
-def test_an_absences_only_student_is_not_read_for_grades(portal, campus, sent):
+def test_a_meeting_marked_present_goes_to_that_students_channels(portal, campus, sent):
+    campus["M1"] = {"7": journal("Math", ("15.09", "present")), "8": journal("Physics", ("16.09", "present"))}
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), attendance=True)]))
+    watcher.check_all()
+
+    campus["M1"]["7"] = journal("Math", ("15.09", "present"), ("22.09", "present"))
+    watcher.check_all()
+
+    assert sent == [("student@example.com", "42", "AZTUSP: attendance updated for Math", f"Course: Math\nSession 2 (22.09): present\n{MATH_TAB}")]
+
+
+def test_an_attendance_only_student_is_not_read_for_grades(portal, campus, sent):
     # The portal fixture has no scores pages for this student, so reading them would fail the check.
     campus["M1"] = {"7": journal("Math", ("15.09", "present")), "8": journal("Physics", ("16.09", "present"))}
-    store = FakeStore([subscription(1, fields=(), absences=True)])
+    store = FakeStore([subscription(1, fields=(), attendance=True)])
 
     Watcher(SETTINGS, WATCH, store).check_all()
 
@@ -674,7 +698,7 @@ def test_an_absences_only_student_is_not_read_for_grades(portal, campus, sent):
 def test_grade_and_absence_changes_are_sent_as_separate_messages(portal, campus, sent):
     portal.pages["M1"] = [scores_page(row("Algorithms", "70", "C")), scores_page(row("Algorithms", "78", "B"))]
     campus["M1"] = {"7": journal("Math", ("15.09", "present")), "8": journal("Physics", ("16.09", "present"))}
-    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, absences=True)]))
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, attendance=True)]))
     watcher.check_all()
 
     campus["M1"]["8"] = journal("Physics", ("16.09", "absent"))
@@ -683,9 +707,9 @@ def test_grade_and_absence_changes_are_sent_as_separate_messages(portal, campus,
     assert [subject for _, _, subject, _ in sent] == ["AZTUSP: result updated for Algorithms", "AZTUSP: attendance updated for Physics"]
 
 
-def test_an_unreadable_course_is_not_reported_as_its_absences_going_or_coming_back(portal, campus, sent):
+def test_an_unreadable_course_is_not_reported_as_its_attendance_going_or_coming_back(portal, campus, sent):
     campus["M1"] = {"7": journal("Math", ("15.09", "absent")), "8": journal("Physics", ("16.09", "present"))}
-    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), absences=True)]))
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), attendance=True)]))
     watcher.check_all()
 
     campus["M1"]["7"] = requests.ConnectionError("portal slow")
@@ -697,7 +721,13 @@ def test_an_unreadable_course_is_not_reported_as_its_absences_going_or_coming_ba
 
 
 def test_absence_watch_can_be_on_without_any_result_field():
-    assert NotificationsIn(fields=[], absences=True).fields == []
+    assert NotificationsIn(fields=[], attendance=True).fields == []
+
+
+def test_the_old_absences_name_still_turns_the_attendance_watch_on():
+    # A client that still sends the old name must not switch the watch off when it saves its other settings.
+    assert NotificationsIn(fields=[], absences=True).attendance is True
+    assert NotificationsIn(fields=["grade"], absences=False).attendance is False
     with pytest.raises(ValidationError, match="choose something to watch"):
         NotificationsIn(fields=[])
 
@@ -747,9 +777,9 @@ def course_tabs(monkeypatch):
     def scores(scraper, idx, listing=None):
         return read(pages.scores.get(scraper.username, {}).get(idx, {"course": None, "components": [], "total": None}), "lecture_score", idx)
 
-    monkeypatch.setattr(absences.courses, "list_courses", lambda scraper: DASHBOARD)
-    monkeypatch.setattr(absences.courses, "course_items", items)
-    monkeypatch.setattr(absences.courses, "course_scores", scores)
+    monkeypatch.setattr(attendance.courses, "list_courses", lambda scraper: DASHBOARD)
+    monkeypatch.setattr(attendance.courses, "course_items", items)
+    monkeypatch.setattr(attendance.courses, "course_scores", scores)
     return pages
 
 
@@ -795,7 +825,7 @@ def test_a_course_seen_for_the_first_time_is_recorded_not_announced():
     assert [change.course for change in find_work_changes(known, current)] == ["Math"]
     assert find_work_changes([], current) == []
     assert find_score_changes([], [{"lec_open_idx": "7", "course": "Math", "components": [component("a", "10", "5")], "total": "5"}]) == []
-    assert find_absence_changes([], [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "absent"}]}]) == []
+    assert find_attendance_changes([], [{"lec_open_idx": "7", "course": "Math", "sessions": [{"number": "1", "date": None, "mark": "absent"}]}]) == []
 
 
 def test_a_work_message_names_each_new_and_changed_work_and_links_to_the_tasks_tab():
@@ -1046,28 +1076,28 @@ def test_turning_notifications_off_keeps_the_password_and_deletes_the_results(st
 @needs_database
 def test_course_watches_are_saved_and_turning_one_off_forgets_only_its_results(store):
     user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
-    everything = Notifications("student@example.com", ["grade"], absences=True, individual_work=True, course_scores=True)
+    everything = Notifications("student@example.com", ["grade"], attendance=True, individual_work=True, course_scores=True)
     store.set_notifications(user.id, everything)
-    for watch in ("absences", "work", "scores"):
+    for watch in ("attendance", "work", "scores"):
         store.save_course_snapshot(user.id, watch, {"courses": []})
     store.save_snapshot(user.id, {"fields": ["final_score", "grade"], "courses": []})
 
     [subscription] = store.subscribers()
-    flags = (subscription.notifications.absences, subscription.notifications.individual_work, subscription.notifications.course_scores)
+    flags = (subscription.notifications.attendance, subscription.notifications.individual_work, subscription.notifications.course_scores)
     assert flags == (True, True, True)
     saved = store.get_notifications(user.id)
-    assert (saved.absences, saved.individual_work, saved.course_scores) == (True, True, True)
+    assert (saved.attendance, saved.individual_work, saved.course_scores) == (True, True, True)
 
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], absences=True))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], attendance=True))
 
     assert store.get_notifications(user.id).individual_work is False
-    assert store.load_course_snapshot(user.id, "absences") == {"courses": []}
+    assert store.load_course_snapshot(user.id, "attendance") == {"courses": []}
     assert store.load_course_snapshot(user.id, "work") is None
     assert store.load_course_snapshot(user.id, "scores") is None
     assert store.load_snapshot(user.id) is not None  # the grades are still watched
 
     store.delete_notifications(user.id)
-    assert store.load_course_snapshot(user.id, "absences") is None
+    assert store.load_course_snapshot(user.id, "attendance") is None
 
 
 @needs_database
@@ -1080,9 +1110,30 @@ def test_absence_snapshots_from_the_old_table_move_to_course_snapshots(store):
 
     UserStore(DATABASE_URL, Fernet.generate_key().decode())  # starts up on the old database, as the API does
 
-    assert store.load_course_snapshot(user.id, "absences") == {"courses": [{"lec_open_idx": "7"}]}
+    assert store.load_course_snapshot(user.id, "attendance") == {"courses": [{"lec_open_idx": "7"}]}
     with store._connect() as db:
         assert db.execute("SELECT to_regclass('absence_snapshots')").fetchone()[0] is None
+
+
+@needs_database
+def test_the_absences_setting_and_snapshots_keep_their_values_under_the_attendance_name(store):
+    user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], attendance=True))
+    store.save_course_snapshot(user.id, "attendance", {"courses": [{"lec_open_idx": "7"}]})
+    with store._connect() as db:
+        # What the previous version stored under the old names.
+        db.execute("ALTER TABLE notification_settings RENAME COLUMN attendance TO absences")
+        db.execute("UPDATE course_snapshots SET watch = 'absences'")
+
+    store._create_schema()  # starts up on the old database, as the API does
+
+    assert store.get_notifications(user.id).attendance is True
+    assert store.load_course_snapshot(user.id, "attendance") == {"courses": [{"lec_open_idx": "7"}]}
+    with store._connect() as db:
+        assert db.execute("SELECT count(*) FROM course_snapshots WHERE watch = 'absences'").fetchone()[0] == 0
+        assert db.execute(
+            "SELECT count(*) FROM information_schema.columns WHERE table_name = 'notification_settings' AND column_name = 'absences'"
+        ).fetchone()[0] == 0
 
 
 @needs_database

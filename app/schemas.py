@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .watcher.config import DEFAULT_FIELDS, WATCHABLE_FIELDS, watched_fields
 
@@ -42,10 +42,12 @@ class NotificationSettings(BaseModel):
         description=f"Result fields to watch, from: {', '.join(WATCHABLE_FIELDS)}. `final_score` and `grade` always come together, "
         "so choosing either watches both. Can be empty when another watch is on.",
     )
-    absences: bool = Field(
+    # "absences" is the name this was saved under before it was renamed; old clients that still send it keep working.
+    attendance: bool = Field(
         False,
-        description="Also watch absence marks in the attendance journal (Davamiyyət). A session newly marked absent, or an "
-        "absence the site changes to present, is sent.",
+        validation_alias=AliasChoices("attendance", "absences"),
+        description="Also watch attendance marks in the attendance journal (Davamiyyət). A session whose mark becomes absent "
+        "or present is sent.",
     )
     individual_work: bool = Field(
         False,
@@ -80,7 +82,7 @@ class NotificationsIn(NotificationSettings):
             "example": {
                 "email": "student@example.com",
                 "fields": ["final_score", "grade"],
-                "absences": True,
+                "attendance": True,
                 "individual_work": True,
                 "course_scores": False,
             }
@@ -96,8 +98,8 @@ class NotificationsIn(NotificationSettings):
 
     @model_validator(mode="after")
     def something_to_watch(self):
-        if not (self.fields or self.absences or self.individual_work or self.course_scores):
-            raise ValueError("choose something to watch: fields, absences, individual_work or course_scores")
+        if not (self.fields or self.attendance or self.individual_work or self.course_scores):
+            raise ValueError("choose something to watch: fields, attendance, individual_work or course_scores")
         return self
 
 
@@ -107,7 +109,7 @@ class NotificationsOut(NotificationSettings):
             "example": {
                 "email": "student@example.com",
                 "fields": ["final_score", "grade"],
-                "absences": True,
+                "attendance": True,
                 "individual_work": True,
                 "course_scores": False,
                 "telegram_linked": True,

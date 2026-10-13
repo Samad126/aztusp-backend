@@ -61,7 +61,7 @@ def save_notifications(
         Notifications(
             email=body.email,
             fields=body.fields,
-            absences=body.absences,
+            attendance=body.attendance,
             individual_work=body.individual_work,
             course_scores=body.course_scores,
         ),

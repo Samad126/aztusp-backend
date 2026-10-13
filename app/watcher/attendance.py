@@ -1,4 +1,4 @@
-"""Read the student's own marks in the attendance journals, and find the absences that appeared since the last check."""
+"""Read the student's own marks in the attendance journals, and find the marks that became absent or present since the last check."""
 
 import logging
 from dataclasses import dataclass
@@ -15,7 +15,7 @@ MARK_LABELS = {PRESENT: "present", ABSENT: "absent", NOT_ENTERED: "not entered"}
 
 
 @dataclass(frozen=True)
-class AbsenceChange:
+class AttendanceChange:
     course: str
     session: str  # class meeting number
     date: str | None
@@ -24,7 +24,7 @@ class AbsenceChange:
     link: CourseLink
 
 
-def take_absence_snapshot(scraper: SiteScraper, previous: list[dict]) -> list[dict]:
+def take_attendance_snapshot(scraper: SiteScraper, previous: list[dict]) -> list[dict]:
     """The student's mark for every class meeting, in each course on the dashboard.
 
     A course that cannot be read this time keeps its marks from `previous` (see take_course_snapshot).
@@ -55,11 +55,12 @@ def _own_marks(scraper: SiteScraper, course: dict, listing: list[dict]) -> dict 
     }
 
 
-def find_absence_changes(previous: list[dict], current: list[dict]) -> list[AbsenceChange]:
-    """Meetings now marked absent that were not before, and absences the site has changed to present.
+def find_attendance_changes(previous: list[dict], current: list[dict]) -> list[AttendanceChange]:
+    """Meetings now marked absent or present that were marked otherwise before: a new absence or presence, a blank or
+    not entered meeting now marked, or an absence the site has changed to present.
 
-    Marks that are not absences (a meeting entered as present, a blank cell) are not reported. A course seen for the
-    first time is skipped: its marks are recorded, not announced.
+    A mark that stays the same is not reported, and neither is a meeting that goes back to blank or not entered. A course
+    seen for the first time is skipped: its marks are recorded, not announced.
     """
     before = {entry["lec_open_idx"]: {s["number"]: s["mark"] for s in entry["sessions"]} for entry in previous}
     changes = []
@@ -70,14 +71,14 @@ def find_absence_changes(previous: list[dict], current: list[dict]) -> list[Abse
         link = CourseLink(entry["lec_open_idx"], entry.get("site_url"))
         for session in entry["sessions"]:
             old, new = old_marks.get(session["number"]), session["mark"]
-            if (new == ABSENT and old != ABSENT) or (old == ABSENT and new == PRESENT):
-                changes.append(AbsenceChange(entry["course"], session["number"], session["date"], old, new, link))
+            if new in (ABSENT, PRESENT) and new != old:
+                changes.append(AttendanceChange(entry["course"], session["number"], session["date"], old, new, link))
     return changes
 
 
-def format_absence_message(changes: list[AbsenceChange], frontend_url: str) -> tuple[str, str]:
+def format_attendance_message(changes: list[AttendanceChange], frontend_url: str) -> tuple[str, str]:
     """Subject and body naming each course and the meetings whose mark changed, with links to the attendance tab."""
-    by_course: dict[str, list[AbsenceChange]] = {}
+    by_course: dict[str, list[AttendanceChange]] = {}
     for change in changes:
         by_course.setdefault(change.course, []).append(change)
 

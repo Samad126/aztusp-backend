@@ -9,7 +9,7 @@ from ..config import Settings
 from ..db import Subscription, UserStore
 from ..scraping.client import BadCredentials, SiteScraper
 from ..scraping.targets import TARGETS_BY_NAME
-from .absences import find_absence_changes, format_absence_message, take_absence_snapshot
+from .attendance import find_attendance_changes, format_attendance_message, take_attendance_snapshot
 from .config import WatcherSettings, watched_fields
 from .notify import format_message, notify
 from .results import find_changes, take_snapshot
@@ -39,7 +39,7 @@ class CourseWatch:
 
 
 COURSE_WATCHES = (
-    CourseWatch("absences", "absences", take_absence_snapshot, find_absence_changes, format_absence_message),
+    CourseWatch("attendance", "attendance", take_attendance_snapshot, find_attendance_changes, format_attendance_message),
     CourseWatch("work", "individual_work", take_work_snapshot, find_work_changes, format_work_message),
     CourseWatch("scores", "course_scores", take_score_snapshot, find_score_changes, format_score_message),
 )
