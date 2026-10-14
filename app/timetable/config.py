@@ -1,7 +1,7 @@
-"""Settings for the fallback timetable: the channel that posts the PDFs, and the Telegram account that reads it.
+"""Settings for the timetable: the channel that posts the PDFs, and the Telegram account that reads it.
 
-Off unless SCHEDULE_CHANNEL is set. The account is a normal user session (a bot cannot read a channel's older posts),
-so the session string is as sensitive as a password. `python -m app.timetable.login` makes it.
+Without SCHEDULE_CHANNEL the timetable is always empty. The account is a normal user session (a bot cannot read a
+channel's older posts), so the session string is as sensitive as a password. `python -m app.timetable.login` makes it.
 """
 
 import os
@@ -46,7 +46,7 @@ class TimetableSource:
         if not channel:
             missing.insert(0, "SCHEDULE_CHANNEL")
         if missing:
-            raise ConfigError(f"The timetable fallback is only partly configured, missing: {', '.join(missing)}")
+            raise ConfigError(f"The timetable is only partly configured, missing: {', '.join(missing)}")
         if channel.lstrip("-").isdigit() and not PRIVATE_CHANNEL.match(channel):
             raise ConfigError("SCHEDULE_CHANNEL must be a username, or the -100... id of a private channel from its link")
         try:

@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from app.config import Settings
 from app.scraping.client import LoginError, SiteScraper
 from app.scraping.parsing import column_keys, parse_pairs, parse_table
-from app.scraping.targets import TARGETS_BY_NAME, Section, Target
+from app.scraping.targets import Section, Target
 
 SCORES_HTML = """
 <table id="op_list"><tr><th>Ad</th><th>Soyadı</th></tr>
@@ -77,18 +77,6 @@ def test_parse_table_reads_header_cells_outside_a_row():
         '<table><td>Dərs</td><td>Bazar ertəsi</td><tr><td>1</td><td>Math</td></tr></table>', "html.parser"
     ).table
     assert parse_table(table) == [{"Dərs": "1", "Bazar ertəsi": "Math"}]
-
-
-def test_schedule_lists_every_semester_block_in_order():
-    block = (
-        '<h6 class="main_title1 text-danger"> {} Dərs cədvəli</h6><div id="preview"><table id="t_list_item"><tr><td>x</td></tr></table></div>'
-        '<table id="op_list"><td>Dərs</td><td>Cümə</td><tr><td>1</td><td>{}</td></tr></table>'
-    )
-    soup = BeautifulSoup(block.format("2026 payiz", "Math") + block.format("2027 yaz", "Art"), "html.parser")
-    target = TARGETS_BY_NAME["schedule"]
-    blocks = SiteScraper._read_section(soup, target.sections["semesters"])
-    assert [b["title"] for b in blocks] == ["2026 payiz Dərs cədvəli", "2027 yaz Dərs cədvəli"]
-    assert [b["rows"] for b in blocks] == [[{"Dərs": "1", "Cümə": "Math"}], [{"Dərs": "1", "Cümə": "Art"}]]
 
 
 class FakeResponse:

@@ -8,7 +8,6 @@ class Section:
     container: str  # CSS selector matching every block
     title: str  # selector for the title, relative to the block
     table: str  # selector for the table, relative to the block
-    following: bool = False  # container is just the title; its table is the next `table` match after it, not a child
 
 
 @dataclass(frozen=True)
@@ -40,11 +39,6 @@ TARGETS: list[Target] = [
                 table="table",
             ),
         },
-    ),
-    Target(
-        name="schedule",
-        path="/studies/lecture_time.php",
-        sections={"semesters": Section(container="h6.main_title1", title="", table="table#op_list", following=True)},
     ),
     Target(name="notices", path="/studies/notice.php", tables={"notices": "table#op_list"}),
 ]

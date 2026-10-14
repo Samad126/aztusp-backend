@@ -89,7 +89,7 @@ def test_login_rejects_bad_password(client):
 
 @pytest.mark.parametrize(
     ("path", "name"),
-    [("profile", "student"), ("scores", "scores"), ("schedule", "schedule"), ("notices", "notices")],
+    [("profile", "student"), ("scores", "scores"), ("notices", "notices")],
 )
 def test_me_pages_scrape_on_request(client, path, name):
     response = client.get(f"/api/v1/me/{path}", headers=login(client))

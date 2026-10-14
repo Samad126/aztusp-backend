@@ -271,12 +271,10 @@ class ScheduleSections(BaseModel):
     semesters: list[Section] = Field(
         [],
         description=(
-            "One block per semester shown on the page, in page order. `title` is the heading "
-            "(e.g. `2026İl payiz Semestr Dərs cədvəli`); `rows` are timetable rows keyed by the column titles "
-            "(`Dərs`, then one column per weekday). In the channel fallback there is one block per group with both weeks in it, "
-            "and one row per session with `day` (`monday` to `friday`), `time`, `week` (`upper`, `lower` or `both`), `course`, "
+            "One block per group of the student, with both weeks in it. `title` is the heading (e.g. `M2 Dərs cədvəli`). "
+            "Each row is one session, with `day` (`monday` to `friday`), `time`, `week` (`upper`, `lower` or `both`), `course`, "
             "`type` (`lecture` or `lab`), `room` and `teacher` (`view=list`). "
-            "Empty when `view=grid`, which fills `grids`. `rows` is empty when no lessons are scheduled."
+            "Empty when `view=grid`, which fills `grids`, and when no timetable is found. `rows` is empty when no lessons are scheduled."
         ),
     )
 
@@ -306,6 +304,7 @@ class ScheduleGrid(BaseModel):
 
 
 class SchedulePage(PageEnvelope):
+    url: str = Field(description="The channel post the timetable came from; empty when no timetable is found.")
     tables: dict[str, list[dict[str, str]]] = Field(description="Always empty.")
     pairs: dict[str, dict[str, str]] = Field(description="Always empty.")
     totals: dict[str, dict[str, str] | None] = Field(description="Always empty.")

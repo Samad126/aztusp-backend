@@ -115,18 +115,6 @@ class SiteScraper:
 
     @staticmethod
     def _read_section(soup: BeautifulSoup, section: Section) -> list[dict]:
-        if section.following:
-            # Titles and tables are siblings: every table belongs to the closest title before it.
-            titles = {id(tag) for tag in soup.select(section.container)}
-            blocks: list[dict] = []
-            for tag in soup.select(f"{section.container}, {section.table}"):
-                if id(tag) in titles:
-                    blocks.append({"title": tag.get_text(" ", strip=True), "rows": []})
-                else:
-                    if not blocks:
-                        blocks.append({"title": None, "rows": []})
-                    blocks[-1]["rows"] += parse_table(tag)
-            return blocks
         return [
             {
                 "title": title.get_text(" ", strip=True) if (title := card.select_one(section.title)) else None,

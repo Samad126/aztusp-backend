@@ -52,7 +52,7 @@ TAGS = [
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Connect and create tables now, so a bad config or unreachable database stops startup
-    # with a clear error instead of failing every request later. The timetable fallback is checked the same way.
+    # with a clear error instead of failing every request later. The timetable config is checked the same way.
     get_store()
     get_timetable_source()
     yield

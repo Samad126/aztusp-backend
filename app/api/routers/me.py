@@ -60,7 +60,7 @@ for _resource, (_target, _summary, _model) in PAGES.items():
 
 @router.get(
     "/schedule",
-    summary="Lecture timetable (one block per semester)",
+    summary="Lecture timetable, from the schedule channel",
     response_model=SchedulePage,
     responses={**UNAUTHORIZED, **SITE_DOWN},
 )
@@ -68,19 +68,18 @@ def read_schedule(
     view: timetable.ScheduleView = Query(
         "list",
         description=(
-            "How the channel's timetable is laid out, with both weeks in it. `list` fills `sections`: one row per session "
+            "How the timetable is laid out, with both weeks in it. `list` fills `sections`: one row per session "
             "(`day`, `time`, `week`, `course`, `type`, `room`, `teacher`). `grid` fills `grids`: one per group, a row per "
             "weekday (`monday` to `friday`) and a cell per lesson time, the cards in each cell with `type` (`lecture` or `lab`), "
-            "`week` (`upper` for üst həftə, `lower` for alt həftə, `both` when every week), `course`, `teacher` and `room`. "
-            "The university's own timetable is returned in `sections` in both views."
+            "`week` (`upper` for üst həftə, `lower` for alt həftə, `both` when every week), `course`, `teacher` and `room`."
         ),
     ),
     scraper: SiteScraper = Depends(current_scraper),
     source: TimetableSource | None = Depends(get_timetable_source),
 ):
-    """The university's timetable, scraped on every request. When the university has no lessons, the student's groups
-    are looked up in the timetable PDFs posted to the schedule channel. `url` is then the channel post the timetable came
-    from. Without a channel configured, this is the university's answer alone."""
+    """The student's timetable, read from the timetable PDFs posted to the schedule channel. The student's groups are read
+    from their course names on the university dashboard, and the newest PDFs are searched for those groups. `url` is the
+    channel post the timetable came from, or empty when none is found. Without a channel configured, the timetable is empty."""
     return timetable.read_timetable(scraper, source, view)
 
 

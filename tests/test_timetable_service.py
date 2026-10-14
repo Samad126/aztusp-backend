@@ -23,18 +23,16 @@ def make_session() -> str:
 
 SESSION = make_session()
 SOURCE = TimetableSource(channel="aztu_timetable", api_id=1, api_hash="hash", session=SESSION)
-EMPTY_PAGE = {
+SCRAPER = object()  # the site session; every test replaces the group lookup, so it is never read
+EMPTY = {
     "name": "schedule",
-    "url": "https://d.example.com/studies/lecture_time.php",
+    "url": "",
     "tables": {},
     "pairs": {},
     "totals": {},
-    "sections": {"semesters": [{"title": None, "rows": []}]},
+    "sections": {"semesters": []},
+    "grids": [],
     "fields": {},
-}
-UNI_PAGE = {
-    **EMPTY_PAGE,
-    "sections": {"semesters": [{"title": "2026 payiz Dərs cədvəli", "rows": [{"Dərs": "1", "Bazar ertəsi": "Math"}]}]},
 }
 SESSIONS = [
     {"day": "monday", "time": "9:00-10:20", "week": "lower", "course": "Chem", "type": "lecture", "room": "1-01", "teacher": "Ali"},
@@ -45,47 +43,40 @@ GRID = {"times": ["9:00-10:20"], "days": [{"day": "monday", "lessons": [{"time":
 LESSONS = Lessons(sessions=SESSIONS, grid=GRID)
 
 
-class FakeScraper:
-    def __init__(self, page):
-        self.page = page
-
-    def scrape(self, target):
-        assert target.name == "schedule"
-        return self.page
-
-
 def no_search(*args, **kwargs):
     raise AssertionError("the channel should not be searched")
+
+
+def no_lookup(*args, **kwargs):
+    raise AssertionError("the university site should not be read")
 
 
 def found_m2(post_id: int = 42) -> list[channel.FoundGroup]:
     return [channel.FoundGroup(group="M2", lessons=LESSONS, post_id=post_id)]
 
 
-def test_university_lessons_are_returned_as_they_are(monkeypatch):
+def test_no_channel_configured_is_an_empty_timetable_and_the_site_is_not_read(monkeypatch):
+    monkeypatch.setattr(courses, "student_groups", no_lookup)
     monkeypatch.setattr(channel, "search", no_search)
 
-    assert service.read_timetable(FakeScraper(UNI_PAGE), SOURCE) == UNI_PAGE
+    result = service.read_timetable(SCRAPER, None)
 
-
-def test_no_channel_configured_returns_the_empty_university_timetable(monkeypatch):
-    monkeypatch.setattr(channel, "search", no_search)
-
-    assert service.read_timetable(FakeScraper(EMPTY_PAGE), None) == EMPTY_PAGE
+    assert result == EMPTY
+    SchedulePage.model_validate(result)
 
 
 def test_no_groups_means_nothing_to_search_for(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: [])
     monkeypatch.setattr(channel, "search", no_search)
 
-    assert service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE) == EMPTY_PAGE
+    assert service.read_timetable(SCRAPER, SOURCE) == EMPTY
 
 
-def test_fallback_has_the_university_shape(monkeypatch):
+def test_timetable_has_the_page_shape(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2())
 
-    result = service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE)
+    result = service.read_timetable(SCRAPER, SOURCE)
 
     assert result == {
         "name": "schedule",
@@ -100,7 +91,7 @@ def test_fallback_has_the_university_shape(monkeypatch):
     SchedulePage.model_validate(result)
 
 
-def test_fallback_searches_for_the_groups_of_the_student(monkeypatch):
+def test_the_channel_is_searched_for_the_groups_of_the_student(monkeypatch):
     seen = {}
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M1", "M2"])
 
@@ -109,19 +100,19 @@ def test_fallback_searches_for_the_groups_of_the_student(monkeypatch):
         return []
 
     monkeypatch.setattr(channel, "search", search)
-    service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE)
+    service.read_timetable(SCRAPER, SOURCE)
 
     assert seen["groups"] == ["M1", "M2"]
 
 
-def test_no_timetable_found_in_the_channel_returns_the_university_answer(monkeypatch):
+def test_no_timetable_found_in_the_channel_is_empty(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: [])
 
-    assert service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE) == EMPTY_PAGE
+    assert service.read_timetable(SCRAPER, SOURCE) == EMPTY
 
 
-def test_channel_error_returns_the_university_answer(monkeypatch):
+def test_channel_error_is_an_empty_timetable(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
 
     def broken(source, groups):
@@ -129,14 +120,14 @@ def test_channel_error_returns_the_university_answer(monkeypatch):
 
     monkeypatch.setattr(channel, "search", broken)
 
-    assert service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE) == EMPTY_PAGE
+    assert service.read_timetable(SCRAPER, SOURCE) == EMPTY
 
 
 def test_both_weeks_are_one_block(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2())
 
-    result = service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE)
+    result = service.read_timetable(SCRAPER, SOURCE)
 
     assert [block["title"] for block in result["sections"]["semesters"]] == ["M2 Dərs cədvəli"]
     SchedulePage.model_validate(result)
@@ -146,7 +137,7 @@ def test_grid_view_fills_grids_and_leaves_sections_empty(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2())
 
-    result = service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE, "grid")
+    result = service.read_timetable(SCRAPER, SOURCE, "grid")
 
     assert result["sections"]["semesters"] == []
     assert result["grids"] == [{"title": "M2 Dərs cədvəli", **GRID}]
@@ -157,31 +148,25 @@ def test_list_view_leaves_grids_empty(monkeypatch):
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2())
 
-    result = service.read_timetable(FakeScraper(EMPTY_PAGE), SOURCE)
+    result = service.read_timetable(SCRAPER, SOURCE)
 
     assert result["grids"] == []
 
 
-def test_fallback_links_a_private_channel_post(monkeypatch):
+def test_a_private_channel_post_is_linked_by_its_id(monkeypatch):
     private = TimetableSource(channel="-1004368645921", api_id=1, api_hash="hash", session=SESSION)
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2(post_id=42))
 
-    result = service.read_timetable(FakeScraper(EMPTY_PAGE), private)
+    result = service.read_timetable(SCRAPER, private)
 
     assert result["url"] == "https://t.me/c/4368645921/42"
 
 
-def test_university_timetable_is_the_same_in_both_views(monkeypatch):
-    monkeypatch.setattr(channel, "search", no_search)
-
-    assert service.read_timetable(FakeScraper(UNI_PAGE), SOURCE, "grid") == UNI_PAGE
-
-
 @pytest.fixture
 def api(monkeypatch):
-    """The real route, with the site scraper and the timetable source replaced; no database is needed."""
-    app.dependency_overrides[deps.current_scraper] = lambda: FakeScraper(EMPTY_PAGE)
+    """The real route, with the site session and the timetable source replaced; no database is needed."""
+    app.dependency_overrides[deps.current_scraper] = lambda: SCRAPER
     app.dependency_overrides[deps.get_timetable_source] = lambda: SOURCE
     monkeypatch.setattr(courses, "student_groups", lambda scraper: ["M2"])
     monkeypatch.setattr(channel, "search", lambda source, groups: found_m2(post_id=7))
@@ -189,7 +174,7 @@ def api(monkeypatch):
     app.dependency_overrides.clear()
 
 
-def test_schedule_endpoint_answers_with_the_fallback(api):
+def test_schedule_endpoint_answers_with_the_timetable(api):
     response = api.get("/api/v1/me/schedule")
 
     assert response.status_code == 200
