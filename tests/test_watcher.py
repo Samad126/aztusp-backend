@@ -38,7 +38,7 @@ from app.watcher.tabs import (
 
 FIELDS = ("final_score", "grade")
 SEMESTER = "2026 Tədris ili payiz Semestr"
-SETTINGS = Settings("k", "db", "example.com", "https://login.example.com/", "https://d.example.com/app/", "u", "p", 5.0)
+SETTINGS = Settings("k", "db", "example.com", "https://login.example.com/", "https://d.example.com/app/", 5.0)
 SMTP = SmtpSettings(host="smtp-relay.brevo.com", port=587, username="login@example.com", password="smtp-key", sender="sender@example.com")
 FRONTEND = "https://app.example.com"
 WATCH = WatcherSettings(interval_seconds=1800, smtp=SMTP, telegram_bot_token="123:ABC", frontend_url=FRONTEND)

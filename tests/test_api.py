@@ -21,7 +21,7 @@ from app.scraping.notices import FileNotFound
 DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TEST_DATABASE_URL not set")
 
-SETTINGS = Settings("k", "db", "example.com", "https://l.example.com/", "https://d.example.com/", "u", "p", 5.0)
+SETTINGS = Settings("k", "db", "example.com", "https://l.example.com/", "https://d.example.com/", 5.0)
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@
 
 import re
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import Tag
 
 from .targets import FIELD_MAP
 
@@ -86,8 +86,3 @@ def parse_pairs(table: Tag) -> dict[str, str]:
         if len(cells) == 2:
             pairs[cells[0].get_text(" ", strip=True)] = cells[1].get_text(" ", strip=True)
     return pairs
-
-
-def find_login_form(html: str) -> Tag | None:
-    password_input = BeautifulSoup(html, "html.parser").find("input", attrs={"type": "password"})
-    return password_input.find_parent("form") if password_input else None

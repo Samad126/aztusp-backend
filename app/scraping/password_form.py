@@ -10,6 +10,8 @@ PASSWORD_FORM_PATH = "/Admin/UpdatePassword"
 # The site's names for its two password inputs. The new password goes into both.
 NEW_PASSWORD_FIELD = "Password"
 CONFIRM_FIELD = "ConfirmPassword"
+# The username input of the sign-in page. A change that worked answers with that page again.
+SIGN_IN_FIELD = "UserId"
 # Texts that explain the answer. A rejected change showed its reason in the info box, so every alert counts.
 MESSAGE_SELECTOR = ".alert, .text-danger, .validation-summary-errors, .field-validation-error"
 
@@ -39,7 +41,7 @@ def change_password(scraper: SiteScraper, password: str) -> dict:
     # The URL is not used: the answers seen so far both ended at the site root, so the page content decides.
     soup = BeautifulSoup(answer.text, "html.parser")
     still_shown = _change_form(soup) is not None
-    sign_in_shown = soup.find("input", attrs={"name": scraper.settings.username_field}) is not None
+    sign_in_shown = soup.find("input", attrs={"name": SIGN_IN_FIELD}) is not None
     changed = sign_in_shown and not still_shown
     return {
         "changed": changed,

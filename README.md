@@ -42,7 +42,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
 | `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable, read from the schedule channel's PDFs: `?view=list` (default) fills `sections`, `?view=grid` fills `grids`. Empty when none is found. See [Timetable](#timetable) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
-| `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages` |
+| `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages`. Answers `404` while the SSO has no change form (see below) |
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
@@ -69,11 +69,11 @@ The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows ke
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 
-`POST /api/v1/me/password` submits the change form on the university site with the new password, typed twice as `password` and `confirm_password`. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
+`POST /api/v1/me/password` is written for the university's old SSO change form. Sign-in has moved to `newsso.aztu.edu.az`, and that form is gone, so the endpoint answers `404` until the university offers a change form again. It submits the form with the new password, typed twice as `password` and `confirm_password`. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
 
 `PUT /api/v1/me/photo` takes the image file as the request body, not as a form. The format is read from the file's first bytes, so the `Content-Type` header does not have to be right. Uploading again replaces the photo. `GET /api/v1/me/photo` returns it with its image type, so the frontend can send the `Authorization` header and show it as a blob URL. The photo is stored on this service only; the university site is not changed.
 
-`POST /api/v1/auth/logout` clicks the university's own logout links first: the dashboard's, then the SSO admin's. Then it ends the API session: the token stops working and the site session cookies are dropped. The saved password, notification settings, Telegram link and profile photo are kept, so change notifications keep running. If the university site can't be reached, the session still ends and the failure is logged. The answer is `{"ok": true}` either way.
+`POST /api/v1/auth/logout` clicks the dashboard's logout link first, then ends the SSO sign-in through the SSO's logout API. Then it ends the API session: the token stops working and the site session cookies are dropped. The saved password, notification settings, Telegram link and profile photo are kept, so change notifications keep running. If the university site can't be reached, the session still ends and the failure is logged. The answer is `{"ok": true}` either way.
 
 `/health` is unversioned (probed by Docker, CI and nginx); everything else lives under `/api/v1`.
 
@@ -123,11 +123,10 @@ Copy [.env.example](.env.example) to `.env`.
 |---|---|---|
 | `APP_SECRET_KEY` | ✔ | Fernet key that encrypts stored cookies and passwords. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep it stable: changing it makes stored sessions unreadable and users must log in again. |
 | `BASE_DOMAIN` | ✔ | Parent domain shared by the login and dashboard hosts |
-| `LOGIN_URL` | ✔ | Portal login page |
+| `LOGIN_URL` | ✔ | The SSO sign-in host, `https://newsso.aztu.edu.az/`. Its `/api/auth` endpoints sign the user in, so only the host matters |
 | `DASHBOARD_URL` | ✔ | Dashboard home page (must be on `BASE_DOMAIN`) |
 | `DATABASE_URL` | ✔ locally | PostgreSQL URL. Overridden by Docker Compose, which points it at the `db` service |
 | `POSTGRES_PASSWORD` | Docker | Password for the Compose Postgres container (default `aztusp`). Use letters and digits only, e.g. `openssl rand -hex 24`. Set it **before** the first start: Postgres only reads it when the data volume is created |
-| `USERNAME_FIELD`, `PASSWORD_FIELD` | – | Names of the login form inputs (default `username`, `password`) |
 | `REQUEST_TIMEOUT` | – | Seconds per request to the portal (default `20`) |
 | `TELEGRAM_BOT_USERNAME` | For Telegram | The bot's username without `@`. The API uses it to build the connect link. The other watcher settings are in [Grade watcher](#grade-watcher) |
 
@@ -207,14 +206,15 @@ app/
     routers/         auth, me (profile/scores/...), notifications, telegram, courses, system (health)
     files.py         streams a university file through the API as a download
   scraping/
-    client.py        portal login and logout, session handling, redirects
+    client.py        portal sign-in through the SSO API, logout, session handling, redirects
     cookies.py       shares session cookies across portal subdomains
     parsing.py       HTML table/pair parsing and field-name translation
     targets.py       what to scrape (CSS selectors) and the field-name translations
     courses.py       course list and lecture plan scraping
     notices.py       notice detail and attachment download
     materials.py     course material detail (text and files) and file download
-    password_form.py password change on the university SSO site
+    password_form.py password change on the old SSO change form (unavailable since the sign-in moved)
+    sso_intermediate.pem the certificate the SSO host doesn't send, trusted for that host only; remove once it's fixed
   timetable/         timetable from the channel's PDFs
     service.py       the student's timetable, or an empty one when no channel is set or nothing is found
     channel.py       searches the channel's newest PDFs for the student's groups (Telethon)

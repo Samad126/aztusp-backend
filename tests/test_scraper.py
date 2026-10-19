@@ -1,8 +1,9 @@
 import pytest
+import requests
 from bs4 import BeautifulSoup
 
 from app.config import Settings
-from app.scraping.client import LoginError, SiteScraper
+from app.scraping.client import BadCredentials, LoginError, SiteScraper, _sso_trust, _SsoAdapter
 from app.scraping.parsing import column_keys, parse_pairs, parse_table
 from app.scraping.targets import Section, Target
 
@@ -35,7 +36,7 @@ class StubScraper(SiteScraper):
 
 
 def make_settings():
-    return Settings("k", "db", "example.com", "https://login.example.com/", "https://d.example.com/app/", "u", "p", 5.0)
+    return Settings("k", "db", "example.com", "https://login.example.com/", "https://d.example.com/app/", 5.0)
 
 
 def test_scrape_result_shape():
@@ -80,30 +81,109 @@ def test_parse_table_reads_header_cells_outside_a_row():
 
 
 class FakeResponse:
-    def __init__(self, url, text="", status_code=200):
+    def __init__(self, url, text="", status_code=200, body=None):
         self.url = url
         self.text = text
         self.status_code = status_code
         self.headers = {}
+        self.body = body
+
+    def json(self):
+        return self.body
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} for {self.url}")
 
 
-LOGIN_FORM = '<form action="/sso" method="post"><input type="text" name="username"><input type="password" name="password"></form>'
+SSO = "https://login.example.com/"
+DASHBOARD = "https://d.example.com/app/"
+
+
+def stub_requests(monkeypatch, scraper, answers):
+    """Answers each (method, url) with a FakeResponse. Returns the calls made, in order: (method, url, json, data)."""
+    calls = []
+
+    def request(method, url, **kwargs):
+        calls.append((method, url, kwargs.get("json"), kwargs.get("data")))
+        return answers[(method, url)]
+
+    monkeypatch.setattr(scraper, "_request", request)
+    return calls
+
+
+def sign_in_answers(system_choice=False):
+    """The SSO's answers to a sign-in that works, and the dashboard's answer once it is handed the assertion."""
+    answers = {
+        ("POST", SSO + "api/auth/login"): FakeResponse(
+            SSO + "api/auth/login", body={"user": {"selectedSystem": "GSAP"}, "systemChoiceRequired": system_choice}
+        ),
+        ("POST", SSO + "api/auth/platform-launch"): FakeResponse(
+            SSO + "api/auth/platform-launch", body={"action": "https://d.example.com/sso/consume.php", "token": "tok"}
+        ),
+        ("POST", "https://d.example.com/sso/consume.php"): FakeResponse("https://d.example.com/telebe/"),
+        ("GET", DASHBOARD): FakeResponse(DASHBOARD),
+    }
+    if system_choice:
+        select = SSO + "api/auth/select-system"
+        answers[("POST", select)] = FakeResponse(select, body={"user": {"selectedSystem": "GSAP"}})
+    return answers
 
 
 def test_wrong_password_reports_incorrect_credentials(monkeypatch):
     scraper = SiteScraper(make_settings(), "user")
-    # The site answers every request with its login page, so the dashboard bounces back to it.
-    page = FakeResponse("https://login.example.com/", LOGIN_FORM)
-    monkeypatch.setattr(scraper, "_request", lambda method, url, **kwargs: page)
+    rejected = FakeResponse(SSO + "api/auth/login", status_code=401)
+    stub_requests(monkeypatch, scraper, {("POST", SSO + "api/auth/login"): rejected})
 
-    with pytest.raises(LoginError, match="^Incorrect username or password$"):
+    with pytest.raises(BadCredentials, match="^Incorrect username or password$"):
         scraper.login("wrong")
 
 
-def test_log_out_visits_the_dashboard_then_sso_logout_links(monkeypatch):
+def test_other_refusals_are_site_failures_not_wrong_passwords(monkeypatch):
+    scraper = SiteScraper(make_settings(), "user")
+    blocked = FakeResponse(SSO + "api/auth/login", status_code=403)
+    stub_requests(monkeypatch, scraper, {("POST", SSO + "api/auth/login"): blocked})
+
+    with pytest.raises(requests.HTTPError):
+        scraper.login("secret")
+
+
+def test_sign_in_calls_the_sso_api_then_hands_the_assertion_to_the_dashboard(monkeypatch):
+    scraper = SiteScraper(make_settings(), "user")
+    calls = stub_requests(monkeypatch, scraper, sign_in_answers())
+
+    scraper.login("secret")
+
+    assert calls == [
+        ("POST", SSO + "api/auth/login", {"username": "user", "password": "secret"}, None),
+        ("POST", SSO + "api/auth/platform-launch", {"target": "GSAP"}, None),
+        ("POST", "https://d.example.com/sso/consume.php", None, {"assertion": "tok"}),
+        ("GET", DASHBOARD, None, None),
+    ]
+
+
+def test_a_choice_of_systems_is_answered_with_the_dashboard_system(monkeypatch):
+    scraper = SiteScraper(make_settings(), "user")
+    calls = stub_requests(monkeypatch, scraper, sign_in_answers(system_choice=True))
+
+    scraper.login("secret")
+
+    assert calls[1] == ("POST", SSO + "api/auth/select-system", {"system": "GSAP"}, None)
+    assert calls[2] == ("POST", SSO + "api/auth/platform-launch", {"target": "GSAP"}, None)
+
+
+def test_a_dashboard_that_sends_the_visitor_to_the_sso_is_not_a_wrong_password(monkeypatch):
+    scraper = SiteScraper(make_settings(), "user")
+    answers = sign_in_answers()
+    answers[("GET", DASHBOARD)] = FakeResponse(SSO)
+    stub_requests(monkeypatch, scraper, answers)
+
+    with pytest.raises(LoginError, match="^The dashboard did not accept the sign-in$") as raised:
+        scraper.login("secret")
+    assert not isinstance(raised.value, BadCredentials)
+
+
+def test_log_out_visits_the_dashboard_then_ends_the_sso_sign_in(monkeypatch):
     scraper = SiteScraper(make_settings(), "user")
     visited = []
     monkeypatch.setattr(scraper, "_request", lambda method, url, **kwargs: visited.append((method, url)))
@@ -112,5 +192,18 @@ def test_log_out_visits_the_dashboard_then_sso_logout_links(monkeypatch):
 
     assert visited == [
         ("GET", "https://d.example.com/logout_proc.php"),
-        ("GET", "https://login.example.com/Admin/Logout"),
+        ("POST", "https://login.example.com/api/auth/logout"),
     ]
+
+
+def test_only_the_sso_host_uses_the_intermediate_trust_store():
+    scraper = SiteScraper(make_settings(), "user")
+
+    assert isinstance(scraper.session.get_adapter(SSO + "api/auth/login"), _SsoAdapter)
+    assert not isinstance(scraper.session.get_adapter(DASHBOARD), _SsoAdapter)
+
+
+def test_sso_trust_store_adds_the_intermediate_to_the_usual_roots():
+    subjects = [{key: value for rdn in cert["subject"] for key, value in rdn} for cert in _sso_trust().get_ca_certs()]
+
+    assert any(subject.get("commonName") == "Sectigo Public Server Authentication CA DV R36" for subject in subjects)

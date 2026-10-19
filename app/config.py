@@ -18,8 +18,6 @@ class Settings:
     base_domain: str
     login_url: str
     dashboard_url: str
-    username_field: str
-    password_field: str
     timeout: float
     telegram_bot_username: str | None = None
 
@@ -37,8 +35,6 @@ class Settings:
             base_domain=required("BASE_DOMAIN").lower().lstrip("."),
             login_url=required("LOGIN_URL"),
             dashboard_url=required("DASHBOARD_URL"),
-            username_field=os.getenv("USERNAME_FIELD", "username").strip(),
-            password_field=os.getenv("PASSWORD_FIELD", "password").strip(),
             timeout=float(os.getenv("REQUEST_TIMEOUT", "20")),
             telegram_bot_username=os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@") or None,
         )

@@ -1,17 +1,22 @@
+import functools
 import json
 import logging
+import ssl
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Tag
+from requests.adapters import HTTPAdapter
+from requests.certs import where as default_ca_bundle
 from requests.cookies import RequestsCookieJar, create_cookie
 
 from ..config import Settings
 from .cookies import share_cookies_across_subdomains
-from .parsing import find_login_form, is_total, map_keys, parse_pairs, parse_table
+from .parsing import is_total, map_keys, parse_pairs, parse_table
 from .targets import Section, Target
 
 log = logging.getLogger(__name__)
@@ -27,10 +32,24 @@ PJAX_HEADERS = {
     "Referer": "https://gsap.aztu.edu.az/telebe/",
 }
 
-# The "Çıxış" (log out) links on the logged-in pages. The dashboard's ends its app session, the SSO admin
-# page's ends the sign-in.
+# The dashboard's "Çıxış" (log out) link ends its app session. The SSO sign-in is ended through its API.
 DASHBOARD_LOGOUT_PATH = "/logout_proc.php"
-SSO_LOGOUT_PATH = "/Admin/Logout"
+
+# The sign-in page of the SSO is a web app that calls these JSON endpoints on its own host.
+SSO_LOGIN_PATH = "/api/auth/login"
+SSO_SELECT_SYSTEM_PATH = "/api/auth/select-system"
+SSO_PLATFORM_LAUNCH_PATH = "/api/auth/platform-launch"
+SSO_LOGOUT_PATH = "/api/auth/logout"
+# The system the dashboard belongs to (GSAP, the master's portal). A user with a choice of systems is switched to it.
+DASHBOARD_SYSTEM = "GSAP"
+# The statuses the SSO answers a wrong username or password with. Other errors are site failures, so the watcher
+# doesn't pause a student's checks for them.
+REJECTED_STATUSES = {400, 401}
+
+# newsso.aztu.edu.az sends its certificate without the intermediate that issued it. Browsers fetch that intermediate
+# themselves, but requests can't, so it is trusted here too. The chain still has to end at a root in certifi.
+# Remove this and _SsoAdapter once the university serves the full chain.
+SSO_INTERMEDIATE_CA = Path(__file__).with_name("sso_intermediate.pem")
 
 
 class LoginError(RuntimeError):
@@ -55,6 +74,22 @@ def load_cookies(jar: RequestsCookieJar, data: str) -> None:
         jar.set_cookie(create_cookie(**item))
 
 
+@functools.cache
+def _sso_trust() -> ssl.SSLContext:
+    """The usual roots plus SSO_INTERMEDIATE_CA. Built once and shared by every SiteScraper."""
+    context = ssl.create_default_context(cafile=default_ca_bundle())
+    context.load_verify_locations(cafile=str(SSO_INTERMEDIATE_CA))
+    return context
+
+
+class _SsoAdapter(HTTPAdapter):
+    """Mounted on the SSO host only, so the extra intermediate is trusted for that host and no other."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs["ssl_context"] = _sso_trust()
+        return super().init_poolmanager(*args, **kwargs)
+
+
 class SiteScraper:
     """Scrapes the site as one user. The password is only used while logging in; it is never kept.
 
@@ -74,6 +109,7 @@ class SiteScraper:
         self._on_save = on_save
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "Mozilla/5.0 (compatible; AZTUSP/1.0)"
+        self.session.mount(urljoin(settings.login_url, "/"), _SsoAdapter())
 
         if cookies:
             try:
@@ -153,13 +189,13 @@ class SiteScraper:
             return response
 
     def log_out(self) -> None:
-        """Click the site's own log out links: the dashboard app first, then the SSO sign-in.
+        """Log out of the dashboard app, then end the SSO sign-in through its API.
 
         Nothing is saved afterwards, since the caller deletes the stored session. Network errors are raised.
         """
         with self._lock:
             self._request("GET", urljoin(self.settings.dashboard_url, DASHBOARD_LOGOUT_PATH))
-            self._request("GET", urljoin(self.settings.login_url, SSO_LOGOUT_PATH))
+            self._request("POST", urljoin(self.settings.login_url, SSO_LOGOUT_PATH))
 
     def _login(self) -> None:
         settings = self.settings
@@ -167,53 +203,39 @@ class SiteScraper:
             raise LoginError("No password available to log in")
         self.session.cookies.clear()
 
-        login_page = self._request("GET", settings.login_url)
-        login_page.raise_for_status()
+        # The same calls the SSO page makes: sign in, choose the system if asked, then launch the dashboard.
+        credentials = {"username": self.username, "password": self._password}
+        sign_in = self._request("POST", urljoin(settings.login_url, SSO_LOGIN_PATH), json=credentials)
+        if sign_in.status_code in REJECTED_STATUSES:
+            raise BadCredentials("Incorrect username or password")
+        sign_in.raise_for_status()
+        log.info("Signed in to the SSO as %s", self.username)
 
-        form = find_login_form(login_page.text)
-        if form is None:
-            raise LoginError(f"No password form found on {login_page.url}")
-
-        payload = form_payload(form)
-        payload[settings.username_field] = self.username
-        payload[settings.password_field] = self._password
-
-        action = urljoin(login_page.url, form.get("action") or login_page.url)
-        method = (form.get("method") or "post").upper()
-        if method == "GET":
-            result = self._request("GET", action, params=payload)
-        else:
-            result = self._request("POST", action, data=payload)
-        log.info("Login form submitted, status %s", result.status_code)
-
-        self._enter_dashboard_app(result)
+        if sign_in.json().get("systemChoiceRequired"):
+            self._sso_post(SSO_SELECT_SYSTEM_PATH, {"system": DASHBOARD_SYSTEM})
+        launch = self._sso_post(SSO_PLATFORM_LAUNCH_PATH, {"target": DASHBOARD_SYSTEM}).json()
+        self._enter_dashboard(launch)
 
         dashboard = self._request("GET", settings.dashboard_url)
         if self._looks_logged_out(dashboard):
-            raise BadCredentials("Incorrect username or password")
+            raise LoginError("The dashboard did not accept the sign-in")
 
         self._save_cookies()
         log.info("Logged in as %s", self.username)
 
-    def _enter_dashboard_app(self, landing: requests.Response) -> None:
-        """Follow the SSO page's token link into the dashboard app.
+    def _sso_post(self, path: str, body: dict) -> requests.Response:
+        """POST JSON to the SSO's API. The sign-in was already accepted, so any failure here is raised."""
+        response = self._request("POST", urljoin(self.settings.login_url, path), json=body)
+        response.raise_for_status()
+        return response
 
-        The dashboard host doesn't accept the SSO cookies directly; the page the SSO
-        lands on links to it with a one-time token that starts the app's own session.
-        """
-        dashboard_host = urlparse(self.settings.dashboard_url).netloc
-        if urlparse(landing.url).netloc == dashboard_host:
-            return
-        if landing.status_code in REDIRECT_STATUSES or not landing.text:
-            return
-
-        for anchor in BeautifulSoup(landing.text, "html.parser").find_all("a", href=True):
-            link = urljoin(landing.url, anchor["href"])
-            if urlparse(link).netloc == dashboard_host:
-                log.info("Entering dashboard app via %s", urlparse(link).path)
-                self._request("GET", link)
-                return
-        log.warning("No link to %s found on %s", dashboard_host, landing.url)
+    def _enter_dashboard(self, launch: dict) -> None:
+        """Hand the sign-in to the dashboard as the SSO page does: open the redirect, or post the assertion to it."""
+        if launch.get("redirectUrl"):
+            self._request("GET", urljoin(self.settings.login_url, launch["redirectUrl"]))
+        else:
+            assertion = {"assertion": launch["token"]}
+            self._request("POST", urljoin(self.settings.login_url, launch["action"]), data=assertion)
 
     def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         """Like session.request, but follows redirects one hop at a time.
@@ -237,15 +259,11 @@ class SiteScraper:
         raise requests.TooManyRedirects(f"More than {MAX_REDIRECTS} redirects, last URL: {url}")
 
     def _looks_logged_out(self, response: requests.Response, password_page: bool = False) -> bool:
-        if _same_page(response.url, self.settings.login_url):
-            return True
-        # A password input only means "logged out" on the login host; dashboard pages
-        # can contain unrelated ones (e.g. the exam password field on the student page),
-        # and so does the change password form, which sits on the login host too.
+        # The dashboard sends a signed-out visitor to the SSO host, and that host only serves the sign-in page.
+        # The change password form is on that host too, so for it only a redirect to the sign-in root counts.
         if password_page:
-            return False
-        on_login_host = urlparse(response.url).netloc == urlparse(self.settings.login_url).netloc
-        return on_login_host and find_login_form(response.text) is not None
+            return _same_page(response.url, self.settings.login_url)
+        return urlparse(response.url).netloc == urlparse(self.settings.login_url).netloc
 
     def _save_cookies(self) -> None:
         if self._on_save:
