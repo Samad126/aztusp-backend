@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from ...schemas import Course, CourseAttendance, CourseItems, CourseScores, Detail, LecturePlan, MaterialDetail
-from ...scraping import courses, materials
+from ...schemas import Course, CourseAttendance, CourseItems, CourseScores, Detail, LecturePlan, MaterialDetail, TaskDetail
+from ...scraping import courses, materials, tasks
 from ...scraping.client import SiteScraper
 from ..deps import current_scraper
 from ..errors import SITE_DOWN, UNAUTHORIZED
@@ -134,3 +134,93 @@ def download_material_file(
     """Streams the file through the API, so the frontend does not need the site session."""
     upstream, filename = materials.open_material_file(scraper, material_id, file_no)
     return file_response(upstream, filename)
+
+
+TASK_ID = Path(pattern=r"^\d{1,12}$", description="Task `id` from a course's `tasks` list.")
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+TASK_NOT_FOUND = {404: {"model": Detail, "description": "No such course or task."}}
+
+
+@router.get(
+    "/{lec_open_idx}/tasks/{task_id}",
+    summary="Read one course task (Qiymətləndirmə)",
+    response_model=TaskDetail,
+    responses={**UNAUTHORIZED, **TASK_NOT_FOUND, **SITE_DOWN},
+)
+def read_task(
+    request: Request,
+    lec_open_idx: str = LEC_OPEN_IDX,
+    task_id: str = TASK_ID,
+    scraper: SiteScraper = Depends(current_scraper),
+):
+    """The task as the site shows it when its `Movzu` is clicked in the tasks list: period, type, text, links and files."""
+    return _with_task_downloads(request, lec_open_idx, tasks.task_detail(scraper, lec_open_idx, task_id))
+
+
+def _with_task_downloads(request: Request, lec_open_idx: str, task: dict) -> dict:
+    task_id = task["id"]
+    for attachment in task["attachments"]:
+        if attachment["file_no"].isdigit():
+            attachment["download"] = request.app.url_path_for(
+                "download_task_file", lec_open_idx=lec_open_idx, task_id=task_id, file_no=attachment["file_no"]
+            )
+    return task
+
+
+@router.get(
+    "/{lec_open_idx}/tasks/{task_id}/files/{file_no}",
+    summary="Download a course task's file (Qoşma)",
+    name="download_task_file",
+    response_class=StreamingResponse,
+    responses={
+        200: {"description": "The file.", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+        **UNAUTHORIZED,
+        404: {"model": Detail, "description": "The task has no such file."},
+        **SITE_DOWN,
+    },
+)
+def download_task_file(
+    lec_open_idx: str = LEC_OPEN_IDX,
+    task_id: str = TASK_ID,
+    file_no: str = Path(pattern=r"^[1-9]\d{0,2}$", description="`file_no` from the task's `attachments`."),
+    scraper: SiteScraper = Depends(current_scraper),
+):
+    """Streams the file through the API, so the frontend does not need the site session."""
+    upstream, filename = tasks.open_task_file(scraper, task_id, file_no)
+    return file_response(upstream, filename)
+
+
+@router.post(
+    "/{lec_open_idx}/tasks/{task_id}/submission",
+    summary="Hand in work for a course task (İşin verilmə)",
+    response_model=TaskDetail,
+    responses={
+        **UNAUTHORIZED,
+        **TASK_NOT_FOUND,
+        409: {"model": Detail, "description": "The site shows no upload form for the task (`can_submit` is false)."},
+        413: {"model": Detail, "description": "A file is over 20 MB."},
+        422: {"description": "Not one or two files."},
+        **SITE_DOWN,
+    },
+)
+def submit_task(
+    request: Request,
+    lec_open_idx: str = LEC_OPEN_IDX,
+    task_id: str = TASK_ID,
+    file1: UploadFile = File(description="First file (`o_file1`)."),
+    file2: UploadFile | None = File(None, description="Second file (`o_file2`), optional."),
+    scraper: SiteScraper = Depends(current_scraper),
+):
+    """Uploads the file(s) to the university site, as the `Əlavə et` button does. This sends real work to the teacher.
+
+    Returns the task as it reads afterwards (`submissions` shows the new count).
+    """
+    files = []
+    for upload in (file1, file2):
+        if upload is None:
+            continue
+        content = upload.file.read(MAX_UPLOAD_BYTES + 1)
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "A file is over 20 MB")
+        files.append((upload.filename or "file", content, upload.content_type or "application/octet-stream"))
+    return _with_task_downloads(request, lec_open_idx, tasks.submit_task(scraper, lec_open_idx, task_id, files))

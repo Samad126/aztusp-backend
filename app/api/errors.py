@@ -13,6 +13,7 @@ from ..scraping.courses import CourseNotFound
 from ..scraping.materials import MaterialNotFound
 from ..scraping.notices import FileNotFound, NoticeNotFound
 from ..scraping.password_form import PasswordFormNotFound
+from ..scraping.tasks import TaskClosed, TaskNotFound
 
 UNAUTHORIZED = {
     401: {"model": Detail, "description": "Missing, invalid or expired token, or the site session expired (log in again)."}
@@ -47,6 +48,14 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(MaterialNotFound)
     async def material_not_found(request: Request, exc: MaterialNotFound):
         return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(TaskNotFound)
+    async def task_not_found(request: Request, exc: TaskNotFound):
+        return JSONResponse({"detail": str(exc)}, status_code=404)
+
+    @app.exception_handler(TaskClosed)
+    async def task_closed(request: Request, exc: TaskClosed):
+        return JSONResponse({"detail": str(exc)}, status_code=409)
 
     @app.exception_handler(FileNotFound)
     async def file_not_found(request: Request, exc: FileNotFound):

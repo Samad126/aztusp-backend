@@ -61,7 +61,22 @@ SCHEMA = (
     END $$
     """,
     "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS attendance BOOLEAN NOT NULL DEFAULT FALSE",
-    "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS individual_work BOOLEAN NOT NULL DEFAULT FALSE",
+    # The seminars and individual work watch was called individual_work. Rename the column so subscribers keep it.
+    """
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'notification_settings' AND column_name = 'individual_work'
+        ) AND NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'notification_settings' AND column_name = 'assessments'
+        ) THEN
+            ALTER TABLE notification_settings RENAME COLUMN individual_work TO assessments;
+        END IF;
+    END $$
+    """,
+    "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS assessments BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE notification_settings ADD COLUMN IF NOT EXISTS course_scores BOOLEAN NOT NULL DEFAULT FALSE",
     # Passwords used to be kept per notification setting. Copy them to the user and drop the old column. Runs on every
     # start; does nothing once the column is gone.
@@ -158,7 +173,7 @@ class Notifications:
     last_checked_at: datetime | None = None
     telegram_linked: bool = False
     attendance: bool = False  # whether attendance marks (absent or present) in the attendance journal are watched
-    individual_work: bool = False  # whether new or changed individual work (Qiymətləndirmə tab) is watched
+    assessments: bool = False  # whether new or changed individual work (Qiymətləndirmə tab) is watched
     course_scores: bool = False  # whether the course scores (Cari müvəffəqiyyət tab) are watched
 
 
@@ -287,12 +302,12 @@ class UserStore:
         """
         with self._connect() as db:
             db.execute(
-                "INSERT INTO notification_settings (user_id, email, fields, attendance, individual_work, course_scores) "
+                "INSERT INTO notification_settings (user_id, email, fields, attendance, assessments, course_scores) "
                 "VALUES (%s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (user_id) DO UPDATE SET email = excluded.email, fields = excluded.fields, "
-                "attendance = excluded.attendance, individual_work = excluded.individual_work, course_scores = excluded.course_scores, "
+                "attendance = excluded.attendance, assessments = excluded.assessments, course_scores = excluded.course_scores, "
                 "status = 'ok', last_checked_at = NULL, updated_at = now()",
-                (user_id, settings.email, settings.fields, settings.attendance, settings.individual_work, settings.course_scores),
+                (user_id, settings.email, settings.fields, settings.attendance, settings.assessments, settings.course_scores),
             )
             if not settings.fields:
                 db.execute("DELETE FROM grade_snapshots WHERE user_id = %s", (user_id,))
@@ -301,7 +316,7 @@ class UserStore:
                 name
                 for name, on in (
                     ("attendance", settings.attendance),
-                    ("work", settings.individual_work),
+                    ("work", settings.assessments),
                     ("scores", settings.course_scores),
                 )
                 if on
@@ -320,7 +335,7 @@ class UserStore:
     def get_notifications(self, user_id: int) -> Notifications | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT n.email, n.fields, n.status, n.last_checked_at, t.user_id IS NOT NULL, n.attendance, n.individual_work, "
+                "SELECT n.email, n.fields, n.status, n.last_checked_at, t.user_id IS NOT NULL, n.attendance, n.assessments, "
                 "n.course_scores FROM notification_settings n LEFT JOIN telegram_chats t ON t.user_id = n.user_id WHERE n.user_id = %s",
                 (user_id,),
             ).fetchone()
@@ -345,7 +360,7 @@ class UserStore:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT u.id, u.site_username, u.password_enc, n.email, n.fields, n.status, n.last_checked_at, t.chat_id, "
-                "n.attendance, n.individual_work, n.course_scores "
+                "n.attendance, n.assessments, n.course_scores "
                 "FROM notification_settings n JOIN users u ON u.id = n.user_id "
                 "LEFT JOIN telegram_chats t ON t.user_id = u.id ORDER BY u.id"
             ).fetchall()
@@ -355,7 +370,7 @@ class UserStore:
             if password is None:
                 log.warning("User %s has no usable saved password, skipping", user_id)
                 continue
-            attendance, individual_work, course_scores = watches
+            attendance, assessments, course_scores = watches
             notifications = Notifications(
                 email,
                 fields,
@@ -363,7 +378,7 @@ class UserStore:
                 checked_at,
                 telegram_linked=chat_id is not None,
                 attendance=attendance,
-                individual_work=individual_work,
+                assessments=assessments,
                 course_scores=course_scores,
             )
             subscriptions.append(Subscription(user_id, site_username, password, notifications, chat_id))

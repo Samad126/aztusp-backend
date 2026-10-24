@@ -113,6 +113,21 @@ def _work_key(work: dict) -> str:
     return "content:" + json.dumps(content, sort_keys=True, ensure_ascii=False)
 
 
+def work_kind(work: dict) -> str:
+    """What the work is called in a message: the task tab lists seminars (`Məşğələ`) and individual work (`Sərbəst iş`) together."""
+    task_type = (work.get("task_type") or "").lower()
+    if "məşğələ" in task_type or "seminar" in task_type:
+        return "seminar"
+    if "sərbəst" in task_type:
+        return "individual work"
+    return "work"
+
+
+def _kinds(changes: list[WorkChange]) -> str:
+    kinds = sorted({work_kind(change.work) for change in changes}, key=("seminar", "individual work", "work").index)
+    return " and ".join(kinds)
+
+
 def format_work_message(changes: list[WorkChange], frontend_url: str) -> tuple[str, str]:
     """Subject and body naming each course and the works that are new or changed, with links to the tasks tab."""
     by_course = _by_course(changes)
@@ -121,14 +136,14 @@ def format_work_message(changes: list[WorkChange], frontend_url: str) -> tuple[s
         lines = [f"Course: {course}"]
         for change in items:
             if change.changed is None:
-                lines.append("New work")
+                lines.append(f"New {work_kind(change.work)}")
                 lines += [f"  {label}: {change.work[key]}" for key, label in WORK_LABELS.items() if change.work.get(key)]
             else:
-                lines.append("Changed work")
+                lines.append(f"Changed {work_kind(change.work)}")
                 lines += [f"  {WORK_LABELS[key]}: {now}" + (f" (was {was})" if was else "") for key, (was, now) in change.changed.items()]
         lines.append(course_links(frontend_url, items[0].link, "tasks"))
         blocks.append("\n".join(lines))
-    return _subject("individual work", by_course), "\n\n".join(blocks)
+    return _subject(_kinds(changes), by_course), "\n\n".join(blocks)
 
 
 # Course scores

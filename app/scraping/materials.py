@@ -61,15 +61,20 @@ def open_material_file(scraper: SiteScraper, material_id: str, file_no: str):
 
 
 def _body(soup: BeautifulSoup) -> str:
+    return "".join(op["insert"] for op in delta_ops(soup) if isinstance(op.get("insert"), str)).strip()
+
+
+def delta_ops(soup: BeautifulSoup) -> list[dict]:
+    """The operations of the Quill delta a page keeps in a script (`var json = '[...]'`); empty if there is none."""
     literal = next((match for tag in soup.find_all("script") if (match := DELTA_LITERAL.search(tag.get_text()))), None)
     if literal is None:
-        return ""
+        return []
     # The page turns line breaks into \n before parsing the JSON, so the same is done here.
     try:
         delta = json.loads(_js_string(literal.group(1)).replace("\n", "\\n").replace("\r", "\\r"), strict=False)
     except ValueError:
-        return ""
-    return "".join(op["insert"] for op in delta if isinstance(op, dict) and isinstance(op.get("insert"), str)).strip()
+        return []
+    return [op for op in delta if isinstance(op, dict)] if isinstance(delta, list) else []
 
 
 def _js_string(literal: str) -> str:

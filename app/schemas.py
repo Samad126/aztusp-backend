@@ -49,10 +49,11 @@ class NotificationSettings(BaseModel):
         description="Also watch attendance marks in the attendance journal (Davamiyyət). A session whose mark becomes absent "
         "or present is sent.",
     )
-    individual_work: bool = Field(
+    assessments: bool = Field(
         False,
-        description="Also watch the individual work of each course (Qiymətləndirmə tab). A new work, or a change to its type, "
-        "topic, evaluation or dates, is sent.",
+        validation_alias=AliasChoices("assessments", "individual_work"),
+        description="Also watch the seminars and individual work of each course (Qiymətləndirmə tab). A new one, or a change to "
+        "its type, topic, evaluation or dates, is sent. The old name `individual_work` is still accepted.",
     )
     course_scores: bool = Field(
         False,
@@ -83,7 +84,7 @@ class NotificationsIn(NotificationSettings):
                 "email": "student@example.com",
                 "fields": ["final_score", "grade"],
                 "attendance": True,
-                "individual_work": True,
+                "assessments": True,
                 "course_scores": False,
             }
         }
@@ -98,8 +99,8 @@ class NotificationsIn(NotificationSettings):
 
     @model_validator(mode="after")
     def something_to_watch(self):
-        if not (self.fields or self.attendance or self.individual_work or self.course_scores):
-            raise ValueError("choose something to watch: fields, attendance, individual_work or course_scores")
+        if not (self.fields or self.attendance or self.assessments or self.course_scores):
+            raise ValueError("choose something to watch: fields, attendance, assessments or course_scores")
         return self
 
 
@@ -110,7 +111,7 @@ class NotificationsOut(NotificationSettings):
                 "email": "student@example.com",
                 "fields": ["final_score", "grade"],
                 "attendance": True,
-                "individual_work": True,
+                "assessments": True,
                 "course_scores": False,
                 "telegram_linked": True,
                 "status": "ok",
@@ -442,6 +443,22 @@ class MaterialDetail(BaseModel):
     views: str = Field("", description="`Müraciətlərin sayı`. Opening the material counts as a view, as it does on the site.")
     attachments: list[Attachment] = Field([], description="Files attached to the material (`Qoşma`).")
     body: str = Field("", description="Text of the material, with line breaks kept.")
+
+
+class TaskDetail(BaseModel):
+    id: str = Field(description="Task id: the `id` of a row in a course's `tasks` list.")
+    subject: str = Field(description="`Movzu`.")
+    task_type: str = Field("", description="`Sərbəst işin növü`, e.g. `Məşğələ`.")
+    start_date: str = Field("", description="Start of the period (`Başlanğıc`), e.g. `20261026`.")
+    end_date: str = Field("", description="End of the period, e.g. `20261030`.")
+    submission_method: str = Field("", description="`Verilmə əlaməti`: how the work is handed in, e.g. `qebul olunmur`.")
+    score: str | None = Field(None, description="`İşin verilmə vəziyyəti` works like a score: the points so far, the `0` of `0/30`.")
+    max_score: str | None = Field(None, description="The maximum of that score, the `30` of `0/30`.")
+    evaluation: str = Field("", description="`Qiymətləndirmə`: `Bəli` if the task is graded.")
+    body: str = Field("", description="Text of the task, with line breaks kept.")
+    links: list[str] = Field([], description="Links in the text, which `body` leaves out.")
+    attachments: list[Attachment] = Field([], description="Files attached by the teacher (`Qoşma1`, `Qoşma2`).")
+    can_submit: bool = Field(description="Whether the site shows the upload form (`İşin verilmə`).")
 
 
 # --- /me/password -----------------------------------------------------------------------

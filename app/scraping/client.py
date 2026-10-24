@@ -181,12 +181,24 @@ class SiteScraper:
             self._save_cookies()
             return response
 
-    def post_form(self, url: str, data: dict[str, str]) -> requests.Response:
-        """Submit a form to the site and return the answer after redirects. The caller reads the answer."""
+    def post_form(self, url: str, data: dict[str, str], files: dict | None = None) -> requests.Response:
+        """Submit a form to the site and return the answer after redirects. The caller reads the answer.
+
+        `files` makes it a multipart upload: field name -> (filename, content, content type).
+        """
         with self._lock:
-            response = self._request("POST", url, data=data)
+            response = self._request("POST", url, data=data, files=files)
             self._save_cookies()
             return response
+
+    def post_page(self, url: str, data: dict[str, str]) -> BeautifulSoup:
+        """Like fetch, for a page the site only serves to the POST its own script sends (it opens a modal with it)."""
+        with self._lock:
+            response = self._request("POST", url, data=data, headers=PJAX_HEADERS)
+            if self._looks_logged_out(response):
+                raise LoginError("Site session expired, please log in again")
+            self._save_cookies()
+            return BeautifulSoup(response.text, "html.parser")
 
     def log_out(self) -> None:
         """Log out of the dashboard app, then end the SSO sign-in through its API.

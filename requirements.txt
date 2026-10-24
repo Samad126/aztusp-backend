@@ -11,3 +11,4 @@ pdfplumber>=0.11
 telethon>=1.40
 # soupsieve 3.x rejects the complex :has() selectors in app/scraping/targets.py; 2.x accepts them.
 soupsieve>=2.10,<3
+python-multipart>=0.0.9

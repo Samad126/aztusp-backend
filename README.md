@@ -62,6 +62,9 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/courses/{lec_open_idx}/attendance` | ✔ | Attendance journal: per-class marks, score and percentage |
 | `GET` | `/api/v1/courses/materials/{material_id}` | ✔ | One course material (Didaktik materiallar): subject, date, views, files and text |
 | `GET` | `/api/v1/courses/materials/{material_id}/files/{file_no}` | ✔ | Download a material's file (Qoşma) |
+| `GET` | `/api/v1/courses/{lec_open_idx}/tasks/{task_id}` | ✔ | One course task (the `Movzu` modal): period, type, text, links, files, `can_submit` |
+| `GET` | `/api/v1/courses/{lec_open_idx}/tasks/{task_id}/files/{file_no}` | ✔ | Download a task's file (Qoşma) |
+| `POST` | `/api/v1/courses/{lec_open_idx}/tasks/{task_id}/submission` | ✔ | Hand in work (`İşin verilmə`): multipart `file1`, optional `file2`, up to 20 MB each. Sends real work to the teacher |
 
 The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows keyed in English (`subject`, `author`, `date`, `views`, ...), plus `id` when the row opens a detail view and `link` for its first link. An empty `items` means nothing was posted. `scores` returns the table as shown (`table`, every cell kept), the same split into `components` (name, max, score) and the `total`. `attendance` returns `info`, the mark `legend`, `header` values, the class `sessions` (dates) and every `students` row with one mark per class.
 
@@ -213,6 +216,7 @@ app/
     courses.py       course list and lecture plan scraping
     notices.py       notice detail and attachment download
     materials.py     course material detail (text and files) and file download
+    tasks.py         course task detail (text, links, files), file download and handing in work
     password_form.py password change on the old SSO change form (unavailable since the sign-in moved)
     sso_intermediate.pem the certificate the SSO host doesn't send, trusted for that host only; remove once it's fixed
   timetable/         timetable from the channel's PDFs
@@ -269,7 +273,7 @@ What a student can watch (`PUT /api/v1/me/notifications`):
 |---|---|---|
 | `fields` | Scores page: `final_score` and `grade` (always together) | The course, the semester and the new result |
 | `attendance` | Attendance journal (Davamiyyət): each class meeting of the student, when it is marked absent or present | The course and each meeting that changed |
-| `individual_work` | Individual work (Qiymətləndirmə tab): a new work, or a change to its type, topic, evaluation or dates | The course and each work that changed |
+| `assessments` | Seminars and individual work (Qiymətləndirmə tab): a new work, or a change to its type, topic, evaluation or dates | The course and each work that changed, named as a seminar (`Məşğələ`) or individual work (`Sərbəst iş`) |
 | `course_scores` | Current course scores (Cari müvəffəqiyyət tab): each component and the total | The course and each score that changed |
 
 `fields` accepts `final_score` and `grade`. Choosing either one watches both. Course type, credits and retake are no

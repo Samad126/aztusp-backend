@@ -307,13 +307,13 @@ def test_absence_marks_can_be_watched_without_result_fields(client):
 
 def test_individual_work_and_course_scores_are_saved_and_read_back(client):
     headers = login(client)
-    watching = {"fields": [], "individual_work": True, "course_scores": True}
+    watching = {"fields": [], "assessments": True, "course_scores": True}
 
     response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, **watching}, headers=headers)
 
     assert response.status_code == 200
     body = response.json()
-    assert (body["individual_work"], body["course_scores"], body["attendance"]) == (True, True, False)
+    assert (body["assessments"], body["course_scores"], body["attendance"]) == (True, True, False)
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
 
 

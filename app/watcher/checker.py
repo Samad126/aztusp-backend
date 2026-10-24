@@ -40,7 +40,7 @@ class CourseWatch:
 
 COURSE_WATCHES = (
     CourseWatch("attendance", "attendance", take_attendance_snapshot, find_attendance_changes, format_attendance_message),
-    CourseWatch("work", "individual_work", take_work_snapshot, find_work_changes, format_work_message),
+    CourseWatch("work", "assessments", take_work_snapshot, find_work_changes, format_work_message),
     CourseWatch("scores", "course_scores", take_score_snapshot, find_score_changes, format_score_message),
 )
 

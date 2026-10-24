@@ -319,7 +319,7 @@ def subscription(
     email="student@example.com",
     chat="42",
     attendance=False,
-    individual_work=False,
+    assessments=False,
     course_scores=False,
 ):
     notifications = Notifications(
@@ -328,7 +328,7 @@ def subscription(
         status,
         telegram_linked=chat is not None,
         attendance=attendance,
-        individual_work=individual_work,
+        assessments=assessments,
         course_scores=course_scores,
     )
     return Subscription(user_id, username, password, notifications, chat)
@@ -750,7 +750,7 @@ def test_settings_saved_before_a_field_was_removed_still_read_back():
     assert saved.fields == []
 
 
-def work(task_type="Essay", end="27.10.2026", id="5", number="1", **extra):
+def work(task_type="Sərbəst iş", end="27.10.2026", id="5", number="1", **extra):
     """An individual work as the Qiymətləndirmə tab reads it. Without an id, the row is identified by its content."""
     row = {"number": number, "task_type": task_type, "evaluation": "10", "subject": "Lecture 3", "start_date": "20.10.2026", "end_date": end, **extra}
     return {**row, "id": id} if id else row
@@ -839,10 +839,23 @@ def test_a_work_message_names_each_new_and_changed_work_and_links_to_the_tasks_t
 
     assert subject == "AZTUSP: individual work updated for Math"
     assert body == (
-        "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
-        "Changed work\n  End: 03.11.2026 (was 27.10.2026)\n"
+        "Course: Math\nNew individual work\n  Type: Sərbəst iş\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
+        "Changed individual work\n  End: 03.11.2026 (was 27.10.2026)\n"
         f"Open in AZTUSP: {FRONTEND}/courses/7?tab=tasks\nOpen on the university site: {tab_url('lecture_task', '7')}"
     )
+
+
+def test_a_seminar_is_not_called_individual_work():
+    link = CourseLink("7", tab_url("lecture_task", "7"))
+    seminar = WorkChange("Math", work("Məşğələ"), None, link)
+    individual = WorkChange("Math", work(), None, link)
+
+    subject, body = format_work_message([seminar], FRONTEND)
+    assert subject == "AZTUSP: seminar updated for Math" and "New seminar\n  Type: Məşğələ" in body and "individual" not in body
+
+    subject, body = format_work_message([individual, seminar], FRONTEND)
+    assert subject == "AZTUSP: seminar and individual work updated for Math"
+    assert "New seminar" in body and "New individual work" in body
 
 
 def test_a_course_that_cannot_be_read_keeps_its_work(course_tabs):
@@ -920,9 +933,9 @@ def test_a_score_message_names_the_course_and_each_score_that_changed():
     )
 
 
-def test_a_new_individual_work_goes_to_that_students_channels(portal, course_tabs, sent):
+def test_a_new_assessment_goes_to_that_students_channels(portal, course_tabs, sent):
     course_tabs.work["M1"] = {"7": {"course": "Math", "items": []}, "8": {"course": "Physics", "items": []}}
-    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), individual_work=True)]))
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), assessments=True)]))
     watcher.check_all()
 
     course_tabs.work["M1"]["7"] = {"course": "Math", "items": [work()]}
@@ -933,7 +946,7 @@ def test_a_new_individual_work_goes_to_that_students_channels(portal, course_tab
             "student@example.com",
             "42",
             "AZTUSP: individual work updated for Math",
-            "Course: Math\nNew work\n  Type: Essay\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
+            "Course: Math\nNew individual work\n  Type: Sərbəst iş\n  Evaluation: 10\n  Topic: Lecture 3\n  Start: 20.10.2026\n  End: 27.10.2026\n"
             f"Open in AZTUSP: {FRONTEND}/courses/7?tab=tasks\nOpen on the university site: {tab_url('lecture_task', '7')}",
         )
     ]
@@ -1076,21 +1089,21 @@ def test_turning_notifications_off_keeps_the_password_and_deletes_the_results(st
 @needs_database
 def test_course_watches_are_saved_and_turning_one_off_forgets_only_its_results(store):
     user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
-    everything = Notifications("student@example.com", ["grade"], attendance=True, individual_work=True, course_scores=True)
+    everything = Notifications("student@example.com", ["grade"], attendance=True, assessments=True, course_scores=True)
     store.set_notifications(user.id, everything)
     for watch in ("attendance", "work", "scores"):
         store.save_course_snapshot(user.id, watch, {"courses": []})
     store.save_snapshot(user.id, {"fields": ["final_score", "grade"], "courses": []})
 
     [subscription] = store.subscribers()
-    flags = (subscription.notifications.attendance, subscription.notifications.individual_work, subscription.notifications.course_scores)
+    flags = (subscription.notifications.attendance, subscription.notifications.assessments, subscription.notifications.course_scores)
     assert flags == (True, True, True)
     saved = store.get_notifications(user.id)
-    assert (saved.attendance, saved.individual_work, saved.course_scores) == (True, True, True)
+    assert (saved.attendance, saved.assessments, saved.course_scores) == (True, True, True)
 
     store.set_notifications(user.id, Notifications("student@example.com", ["grade"], attendance=True))
 
-    assert store.get_notifications(user.id).individual_work is False
+    assert store.get_notifications(user.id).assessments is False
     assert store.load_course_snapshot(user.id, "attendance") == {"courses": []}
     assert store.load_course_snapshot(user.id, "work") is None
     assert store.load_course_snapshot(user.id, "scores") is None
