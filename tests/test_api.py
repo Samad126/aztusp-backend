@@ -391,7 +391,7 @@ PASSWORD_CHANGE = {"password": "better-pass", "confirm_password": "better-pass"}
 def fake_change_form(changed: bool):
     """Stands in for the SSO change form, so these tests never reach the site."""
 
-    def change(scraper, password):
+    def change(scraper, current, password):
         return {"changed": changed, "url": "https://sso.example.com/", "messages": [] if changed else ["rules"]}
 
     return change

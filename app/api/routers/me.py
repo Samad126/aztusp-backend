@@ -135,7 +135,7 @@ def download_notice_file(
     response_model=PasswordChangeResult,
     responses={
         **UNAUTHORIZED,
-        404: {"model": Detail, "description": "The site page has no password form."},
+        422: {"description": "The two passwords differ, or there is no current password to send (log in again)."},
         **SITE_DOWN,
     },
 )
@@ -144,14 +144,18 @@ def change_password(
     scraper: SiteScraper = Depends(current_scraper),
     store: UserStore = Depends(get_store),
 ):
-    """Submit the password change form on the university SSO site with the new password.
+    """Change the site password as the "Parol redaktə et" modal of the profile page does.
 
-    `changed` is true when the site answers with its sign-in page and no change form. Otherwise `messages` holds the
-    alert and error texts from the page. Passwords that do not match are rejected before the site is contacted.
+    `current_password` is the old password; left out, the one saved at login is sent. The site's answer does not say
+    whether it worked, so `changed` is true when the site then signs in with the new password. Otherwise `messages`
+    holds the site's answer. Passwords that do not match are rejected before the site is contacted.
 
     After a change, the password saved at login is replaced with the new one, so change notifications keep signing in.
     """
-    result = password_form.change_password(scraper, body.password)
+    current = body.current_password or store.saved_password(scraper.user.id)
+    if not current:
+        raise HTTPException(422, "No current password: send current_password, or log in again so one is saved")
+    result = password_form.change_password(scraper, current, body.password)
     if result["changed"]:
         store.save_password(scraper.user.id, body.password)
     return result

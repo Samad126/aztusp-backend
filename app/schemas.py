@@ -465,6 +465,9 @@ class TaskDetail(BaseModel):
 
 
 class PasswordChangeIn(BaseModel):
+    current_password: str | None = Field(
+        None, description="The current site password (`Orijinal parol`). Left out, the password saved at login is used."
+    )
     password: str = Field(description="The new site password.")
     confirm_password: str = Field(description="The new password again. Must match `password`.")
 
@@ -476,6 +479,6 @@ class PasswordChangeIn(BaseModel):
 
 
 class PasswordChangeResult(BaseModel):
-    changed: bool = Field(description="True when the site answered with its sign-in page and no change form.")
-    url: str = Field(description="Page the site answered with, after any redirects.")
-    messages: list[str] = Field(description="Alert and error texts on that page. Empty when `changed` is true.")
+    changed: bool = Field(description="True when the site signs in with the new password afterwards.")
+    url: str = Field(description="Page the site answered the change with.")
+    messages: list[str] = Field(description="The site's answer, when the change did not take. Empty when `changed` is true.")

@@ -181,13 +181,13 @@ class SiteScraper:
             self._save_cookies()
             return response
 
-    def post_form(self, url: str, data: dict[str, str], files: dict | None = None) -> requests.Response:
+    def post_form(self, url: str, data: dict[str, str], files: dict | None = None, headers: dict[str, str] | None = None) -> requests.Response:
         """Submit a form to the site and return the answer after redirects. The caller reads the answer.
 
         `files` makes it a multipart upload: field name -> (filename, content, content type).
         """
         with self._lock:
-            response = self._request("POST", url, data=data, files=files)
+            response = self._request("POST", url, data=data, files=files, headers=headers)
             self._save_cookies()
             return response
 

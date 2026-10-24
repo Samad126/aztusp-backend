@@ -42,7 +42,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `GET` | `/api/v1/me/scores` | ✔ | Scores and semester results |
 | `GET` | `/api/v1/me/schedule` | ✔ | Lecture timetable, read from the schedule channel's PDFs: `?view=list` (default) fills `sections`, `?view=grid` fills `grids`. Empty when none is found. See [Timetable](#timetable) |
 | `GET` | `/api/v1/me/notices` | ✔ | Notices |
-| `POST` | `/api/v1/me/password` | ✔ | Change the site password through the SSO change form. Returns `changed`, `url` and `messages`. Answers `404` while the SSO has no change form (see below) |
+| `POST` | `/api/v1/me/password` | ✔ | Change the site password through the profile page's change modal. Returns `changed`, `url` and `messages` |
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
@@ -72,7 +72,7 @@ The list tabs (`notices`, `board`, `materials`, `tasks`) return `items`: rows ke
 
 Every data endpoint scrapes the university site live, so a call takes as long as the portal needs to respond. If the portal session has expired the endpoint answers `401` and you log in again.
 
-`POST /api/v1/me/password` is written for the university's old SSO change form. Sign-in has moved to `newsso.aztu.edu.az`, and that form is gone, so the endpoint answers `404` until the university offers a change form again. It submits the form with the new password, typed twice as `password` and `confirm_password`. The answer has `changed`, `url` and `messages`: `changed` is `true` when the site answers with its sign-in page instead of the change form. Otherwise `messages` holds the alert and error texts from the page, such as the password rules. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
+`POST /api/v1/me/password` does what the "Parol redaktə et" modal of the profile page does: it posts the old password and the new one (typed twice) to `student_pwd_ajax.php`. Send the new password as `password` and `confirm_password`, and the old one as `current_password`; left out, the password saved at login is used. The site's answer does not say whether it worked (its own page shows success either way), so `changed` is `true` when the site then signs in with the new password. Otherwise `messages` holds the site's answer. After a successful change, the saved password is replaced with the new one, so change notifications keep working.
 
 `PUT /api/v1/me/photo` takes the image file as the request body, not as a form. The format is read from the file's first bytes, so the `Content-Type` header does not have to be right. Uploading again replaces the photo. `GET /api/v1/me/photo` returns it with its image type, so the frontend can send the `Authorization` header and show it as a blob URL. The photo is stored on this service only; the university site is not changed.
 
@@ -85,7 +85,7 @@ Errors are returned as `{"detail": "..."}`:
 | Status | Meaning |
 |---|---|
 | `401` | Missing, invalid or expired token (tokens last 1 day), expired site session, or the site rejected the saved password (`PUT /me/notifications`, then log in again) |
-| `404` | Unknown target, course or notice, no password form on the site, no profile photo (`GET /me/photo`), or notifications are off (`GET /me/notifications`) |
+| `404` | Unknown target, course or notice, no profile photo (`GET /me/photo`), or notifications are off (`GET /me/notifications`) |
 | `409` | Disconnecting Telegram while notifications are on without an email |
 | `413` | The profile photo is larger than 10 MB (`PUT /me/photo`) |
 | `415` | The uploaded file is not a JPEG, PNG or WebP image (`PUT /me/photo`) |
@@ -217,7 +217,7 @@ app/
     notices.py       notice detail and attachment download
     materials.py     course material detail (text and files) and file download
     tasks.py         course task detail (text, links, files), file download and handing in work
-    password_form.py password change on the old SSO change form (unavailable since the sign-in moved)
+    password_form.py password change through the profile page's modal
     sso_intermediate.pem the certificate the SSO host doesn't send, trusted for that host only; remove once it's fixed
   timetable/         timetable from the channel's PDFs
     service.py       the student's timetable, or an empty one when no channel is set or nothing is found
