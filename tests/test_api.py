@@ -259,6 +259,18 @@ def test_turning_notifications_on_never_returns_the_password(client):
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
 
 
+def test_the_time_of_the_last_check_is_read_back_and_cleared_by_saving_again(client, store):
+    headers = login(client)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
+
+    store.record_check(user_of(store, headers).id, "ok")
+    body = client.get("/api/v1/me/notifications", headers=headers).json()
+    assert body["status"] == "ok" and body["last_checked_at"] is not None
+
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)  # new settings, so a new first check
+    assert client.get("/api/v1/me/notifications", headers=headers).json()["last_checked_at"] is None
+
+
 def test_a_saved_password_the_site_rejects_blocks_notifications(client, store):
     headers = login(client)
     store.save_password(user_of(store, headers).id, "bad")  # as if the password was changed on the site
