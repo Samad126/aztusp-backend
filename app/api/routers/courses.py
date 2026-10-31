@@ -74,7 +74,7 @@ for _name, _summary in LIST_PAGES.items():
 
 @router.get(
     "/{lec_open_idx}/scores",
-    summary="Course scores (Cari müvəffəqiyyət)",
+    summary="Course scores before the final exam (Cari müvəffəqiyyət)",
     response_model=CourseScores,
     responses={**UNAUTHORIZED, **COURSE_NOT_FOUND, **SITE_DOWN},
 )

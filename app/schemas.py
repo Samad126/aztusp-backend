@@ -365,16 +365,24 @@ class CourseItems(BaseModel):
 
 class ScoreComponent(BaseModel):
     name: str
-    max: str | None = Field(description="Maximum points, taken from the column title, e.g. `Məşğələ(30)`.")
+    max: str | None = Field(
+        description="Maximum points, taken from the column title, e.g. `Məşğələ(40)`. `Məşğələ` adds up the quizzes and the midterm "
+        "(2 quizzes of 10 and a midterm of 20); the teacher lists each one in the tasks tab."
+    )
     score: str | None = Field(description="Points earned; `null` if not graded yet.")
 
 
 class CourseScores(BaseModel):
+    """Scores before the final exam. The final score is only on the scores page (`GET /me/scores`), never here."""
+
     params: dict[str, str] = Field(description="Ids that identify the course on the site.")
     course: str | None
     table: list[dict[str, str]] = Field(description="The score table as shown: column title -> value, empty cells kept as `\"\"`.")
     components: list[ScoreComponent] = Field(description="The same data split into name, maximum and score per column, without the total.")
-    total: str | None = Field(description="Total (`Toplam`) as shown on the site.")
+    total: str | None = Field(
+        description="Total (`Toplam`) as shown on the site. It leaves out the final exam, and the site still prints a `Davamiyyət` "
+        "column although attendance no longer counts for points. Take the final score from the scores page."
+    )
     notes: list[str] = Field(description="Remarks printed under the table.")
 
 
