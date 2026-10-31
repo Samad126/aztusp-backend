@@ -235,7 +235,7 @@ def test_docs_expose_only_new_names(client):
 
 
 
-NOTIFICATIONS = {"email": "student@example.com", "fields": ["grade"]}
+NOTIFICATIONS = {"email": "student@example.com", "grades": True}
 
 
 def user_of(store, headers):
@@ -253,7 +253,7 @@ def test_turning_notifications_on_never_returns_the_password(client):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["email"] == "student@example.com" and body["fields"] == ["final_score", "grade"]  # the pair always comes together
+    assert body["email"] == "student@example.com" and body["grades"] is True and body["attendance"] is False
     assert body["status"] == "ok" and body["last_checked_at"] is None and body["telegram_linked"] is False
     assert "password" not in body and "good" not in response.text
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
@@ -281,11 +281,7 @@ def test_an_email_or_a_connected_telegram_is_required(client, store):
 @pytest.mark.parametrize(
     "change",
     [
-        {"fields": ["nope"]},
-        {"fields": ["credits"]},
-        {"fields": ["course_type"]},
-        {"fields": ["retake"]},
-        {"fields": []},
+        {"grades": False},
         {"email": "not-an-address"},
     ],
 )
@@ -295,26 +291,23 @@ def test_invalid_notification_settings_are_rejected(client, change):
     assert response.status_code == 422
 
 
-def test_absence_marks_can_be_watched_without_result_fields(client):
+def test_attendance_can_be_watched_without_grades(client):
     headers = login(client)
 
-    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "fields": [], "attendance": True}, headers=headers)
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "grades": False, "attendance": True}, headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["attendance"] is True and response.json()["fields"] == []
+    assert response.json()["attendance"] is True and response.json()["grades"] is False
     assert client.get("/api/v1/me/notifications", headers=headers).json()["attendance"] is True
 
 
-def test_individual_work_and_course_scores_are_saved_and_read_back(client):
+def test_grades_turn_on_the_result_and_both_course_watches(client, store):
     headers = login(client)
-    watching = {"fields": [], "assessments": True, "course_scores": True}
 
-    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, **watching}, headers=headers)
+    client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
 
-    assert response.status_code == 200
-    body = response.json()
-    assert (body["assessments"], body["course_scores"], body["attendance"]) == (True, True, False)
-    assert client.get("/api/v1/me/notifications", headers=headers).json() == body
+    saved = store.get_notifications(user_of(store, headers).id)
+    assert saved.fields == ["final_score", "grade"] and saved.assessments and saved.course_scores and not saved.attendance
 
 
 def test_turning_notifications_off(client):

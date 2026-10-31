@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .watcher.config import DEFAULT_FIELDS, WATCHABLE_FIELDS, watched_fields
 
 
 class Detail(BaseModel):
@@ -37,28 +36,17 @@ class NotificationSettings(BaseModel):
         description="Address that result changes are mailed to. Optional when Telegram is connected.",
         examples=["student@example.com"],
     )
-    fields: list[str] = Field(
-        default_factory=lambda: list(DEFAULT_FIELDS),
-        description=f"Result fields to watch, from: {', '.join(WATCHABLE_FIELDS)}. `final_score` and `grade` always come together, "
-        "so choosing either watches both. Can be empty when another watch is on.",
+    grades: bool = Field(
+        False,
+        description="Watch everything about grades: the final score and grade, the points of each course before the final exam "
+        "(Cari müvəffəqiyyət tab) and the quizzes, midterms and other assessments the teachers post (Qiymətləndirmə tab).",
     )
     # "absences" is the name this was saved under before it was renamed; old clients that still send it keep working.
     attendance: bool = Field(
         False,
         validation_alias=AliasChoices("attendance", "absences"),
-        description="Also watch attendance marks in the attendance journal (Davamiyyət). A session whose mark becomes absent "
+        description="Watch attendance marks in the attendance journal (Davamiyyət). A session whose mark becomes absent "
         "or present is sent.",
-    )
-    assessments: bool = Field(
-        False,
-        validation_alias=AliasChoices("assessments", "individual_work"),
-        description="Also watch the seminars and individual work of each course (Qiymətləndirmə tab). A new one, or a change to "
-        "its type, topic, evaluation or dates, is sent. The old name `individual_work` is still accepted.",
-    )
-    course_scores: bool = Field(
-        False,
-        description="Also watch the current scores of each course (Cari müvəffəqiyyət tab). A component's score or the total "
-        "that changes is sent.",
     )
 
     @field_validator("email")
@@ -70,37 +58,22 @@ class NotificationSettings(BaseModel):
             raise ValueError("must be an email address")
         return value
 
-    @field_validator("fields")
-    @classmethod
-    def in_watch_order(cls, fields: list[str]) -> list[str]:
-        # Also applies to what is read back, so settings saved before a field was removed are never rejected.
-        return watched_fields(fields)
-
 
 class NotificationsIn(NotificationSettings):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "email": "student@example.com",
-                "fields": ["final_score", "grade"],
+                "grades": True,
                 "attendance": True,
-                "assessments": True,
-                "course_scores": False,
             }
         }
     )
 
-    @field_validator("fields", mode="before")
-    @classmethod
-    def known_fields(cls, fields):
-        if isinstance(fields, list) and any(name not in WATCHABLE_FIELDS for name in fields):
-            raise ValueError(f"fields must be from: {', '.join(WATCHABLE_FIELDS)}")
-        return fields
-
     @model_validator(mode="after")
     def something_to_watch(self):
-        if not (self.fields or self.attendance or self.assessments or self.course_scores):
-            raise ValueError("choose something to watch: fields, attendance, assessments or course_scores")
+        if not (self.grades or self.attendance):
+            raise ValueError("choose something to watch: grades or attendance")
         return self
 
 
@@ -109,16 +82,22 @@ class NotificationsOut(NotificationSettings):
         json_schema_extra={
             "example": {
                 "email": "student@example.com",
-                "fields": ["final_score", "grade"],
+                "grades": True,
                 "attendance": True,
-                "assessments": True,
-                "course_scores": False,
                 "telegram_linked": True,
                 "status": "ok",
                 "last_checked_at": "2026-10-10T11:30:00Z",
             }
         }
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def grades_from_the_watches(cls, data):
+        # Stored as the result fields plus two tab watches; all three are one choice in the API.
+        if isinstance(data, dict) and "grades" not in data:
+            data = {**data, "grades": bool(data.get("fields") or data.get("assessments") or data.get("course_scores"))}
+        return data
 
     telegram_linked: bool = Field(description="Whether a Telegram chat is connected (see `/me/telegram/link`).")
     status: Literal["ok", "wrong_password", "error"] = Field(

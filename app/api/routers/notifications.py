@@ -6,6 +6,7 @@ from ...config import Settings
 from ...db import Notifications, User, UserStore
 from ...schemas import Detail, NotificationsIn, NotificationsOut, OkResponse
 from ...scraping.client import SiteScraper
+from ...watcher.config import DEFAULT_FIELDS
 from ..deps import current_user, get_settings, get_store
 from ..errors import SITE_DOWN, UNAUTHORIZED
 
@@ -60,10 +61,10 @@ def save_notifications(
         user.id,
         Notifications(
             email=body.email,
-            fields=body.fields,
+            fields=list(DEFAULT_FIELDS) if body.grades else [],
             attendance=body.attendance,
-            assessments=body.assessments,
-            course_scores=body.course_scores,
+            assessments=body.grades,
+            course_scores=body.grades,
         ),
     )
     return NotificationsOut(**asdict(store.get_notifications(user.id)))

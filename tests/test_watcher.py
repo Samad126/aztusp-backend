@@ -720,34 +720,25 @@ def test_an_unreadable_course_is_not_reported_as_its_attendance_going_or_coming_
     assert sent == []
 
 
-def test_absence_watch_can_be_on_without_any_result_field():
-    assert NotificationsIn(fields=[], attendance=True).fields == []
+def test_attendance_watch_can_be_on_without_grades():
+    assert NotificationsIn(grades=False, attendance=True).grades is False
 
 
 def test_the_old_absences_name_still_turns_the_attendance_watch_on():
     # A client that still sends the old name must not switch the watch off when it saves its other settings.
-    assert NotificationsIn(fields=[], absences=True).attendance is True
-    assert NotificationsIn(fields=["grade"], absences=False).attendance is False
+    assert NotificationsIn(grades=False, absences=True).attendance is True
+    assert NotificationsIn(grades=True, absences=False).attendance is False
     with pytest.raises(ValidationError, match="choose something to watch"):
-        NotificationsIn(fields=[])
+        NotificationsIn(grades=False)
 
 
-def test_final_score_and_grade_are_always_watched_together():
-    assert NotificationsIn(fields=["grade"]).fields == ["final_score", "grade"]
-    assert NotificationsIn(fields=["final_score"]).fields == ["final_score", "grade"]
-    assert NotificationsIn(fields=["final_score", "grade"]).fields == ["final_score", "grade"]
+def test_saved_watches_read_back_as_one_grades_choice():
+    stored = {"email": None, "telegram_linked": True, "status": "ok"}
 
-
-@pytest.mark.parametrize("name", ["course_type", "credits", "retake", "nope"])
-def test_fields_that_are_not_offered_are_refused(name):
-    with pytest.raises(ValidationError, match="fields must be from"):
-        NotificationsIn(fields=[name])
-
-
-def test_settings_saved_before_a_field_was_removed_still_read_back():
-    saved = NotificationsOut(email=None, fields=["course_type", "credits", "retake"], telegram_linked=True, status="ok")
-
-    assert saved.fields == []
+    assert NotificationsOut(**stored, fields=["final_score", "grade"]).grades is True
+    assert NotificationsOut(**stored, fields=[], assessments=True).grades is True
+    assert NotificationsOut(**stored, fields=[], course_scores=True).grades is True
+    assert NotificationsOut(**stored, fields=[], attendance=True).grades is False
 
 
 def work(task_type="Sərbəst iş", end="27.10.2026", id="5", number="1", **extra):

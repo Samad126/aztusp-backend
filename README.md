@@ -46,7 +46,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
-| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels, watched fields and attendance, status of the last check |
+| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels and what is watched (grades, attendance), status of the last check |
 | `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them, with the password saved at login |
 | `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved results |
 | `GET` | `/api/v1/me/telegram` | ✔ | Whether a Telegram chat is connected |
@@ -113,7 +113,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/m
 # 4. turn change notifications on (email is optional once Telegram is connected)
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   http://localhost:8000/api/v1/me/notifications \
-  -d '{"email": "student@example.com", "fields": ["final_score", "grade"]}'
+  -d '{"email": "student@example.com", "grades": true, "attendance": true}'
 ```
 
 In Swagger UI, call `POST /api/v1/auth/login`, click **Authorize**, and paste the token.
@@ -271,13 +271,11 @@ What a student can watch (`PUT /api/v1/me/notifications`):
 
 | Field | Watches | Message names |
 |---|---|---|
-| `fields` | Scores page: `final_score` and `grade` (always together) | The course, the semester and the new result |
+| `grades` | Everything about grades: the final score and grade (scores page), the points before the final exam (Cari müvəffəqiyyət tab), and the quizzes, midterms and other assessments the teachers post (Qiymətləndirmə tab) | The course and what changed: the new result, a score, or an assessment named as a seminar (`Məşğələ`) or individual work (`Sərbəst iş`) |
 | `attendance` | Attendance journal (Davamiyyət): each class meeting of the student, when it is marked absent or present | The course and each meeting that changed |
-| `assessments` | Seminars and individual work (Qiymətləndirmə tab): a new work, or a change to its type, topic, evaluation or dates | The course and each work that changed, named as a seminar (`Məşğələ`) or individual work (`Sərbəst iş`) |
-| `course_scores` | Current course scores (Cari müvəffəqiyyət tab): each component and the total | The course and each score that changed |
 
-`fields` accepts `final_score` and `grade`. Choosing either one watches both. Course type, credits and retake are no
-longer offered: saved settings that name them are read back without them. At least one of the four must be on.
+At least one of the two must be on. Both are `false` by default. Settings saved before `grades` existed read back as `grades: true`
+when any of their grade watches was on.
 
 **Attendance marks:** the watcher reports a meeting whose mark becomes absent (`q/b`) or present (`i/e`), including one that was
 blank or not entered before. A mark that stays the same is not sent, and neither is a meeting going back to blank. Messages look like
@@ -303,7 +301,7 @@ and results link to the grades page. Each course's university link is the same t
 3. `GET /api/v1/me/telegram` returns `{"linked": true}` once it worked.
 
 The code works once and expires after 15 minutes. Then the student turns notifications on with
-`PUT /api/v1/me/notifications`, sending the fields to watch and, optionally, an email. The password saved at login is
+`PUT /api/v1/me/notifications`, sending `grades` and/or `attendance` and, optionally, an email. The password saved at login is
 used, so the student doesn't type it again. An email, a connected Telegram, or both are accepted. If the site rejects
 the saved password (for example after a change made on the site), the student logs in again, which saves the new one.
 The response includes:
@@ -316,7 +314,7 @@ The response includes:
 
 The frontend should show `wrong_password` and `error` to the student.
 
-**What is stored:** the site password, encrypted with `APP_SECRET_KEY`, plus the email, the fields, the last seen
+**What is stored:** the site password, encrypted with `APP_SECRET_KEY`, plus the email, the watch choices, the last seen
 results, the last seen contents of the course tabs and the Telegram chat id. Turning notifications off keeps the password and the Telegram link. Disconnecting Telegram
 (`DELETE /api/v1/me/telegram`) needs an email set first, so messages don't silently stop. Logging out keeps
 all of it. The watcher signs in on every check rather than reusing the session, because a portal session lasts
