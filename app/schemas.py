@@ -247,6 +247,23 @@ class ScoresPage(PageEnvelope):
     fields: dict[str, str | None] = Field(description="Always empty.")
 
 
+class CourseGrades(BaseModel):
+    lec_open_idx: str
+    code: str = Field("", description="Course code, e.g. `IT437`.")
+    course: str
+    quiz1: str | None = Field(None, description="Points for Quiz 1; `null` until graded.")
+    midterm: str | None = Field(None, description="Points for the midterm.")
+    quiz2: str | None = Field(None, description="Points for Quiz 2.")
+    individual_work: str | None = Field(None, description="Points for individual work (`Sərbəst iş`).")
+    final: str | None = Field(None, description="Final exam points, from the scores page.")
+    average: str | None = Field(None, description="Sum of the points above that are graded so far.")
+    max: dict[str, str | None] = Field({}, description="Maximum points per column where the site shows it.")
+
+
+class GradesPage(BaseModel):
+    courses: list[CourseGrades] = Field(description="Current semester courses, in dashboard order, in the grading order Quiz 1, Midterm, Quiz 2, Individual Work, Final.")
+
+
 class ScheduleSections(BaseModel):
     semesters: list[Section] = Field(
         [],

@@ -6,6 +6,7 @@ from ...db import User, UserStore
 from ...photos import MAX_PHOTO_BYTES, sniff_image_type
 from ...schemas import (
     Detail,
+    GradesPage,
     NoticeDetail,
     NoticesPage,
     OkResponse,
@@ -15,7 +16,7 @@ from ...schemas import (
     SchedulePage,
     ScoresPage,
 )
-from ...scraping import notices, password_form
+from ...scraping import grades, notices, password_form
 from ...scraping.client import SiteScraper
 from ...scraping.targets import TARGETS_BY_NAME
 from ...timetable import service as timetable
@@ -52,6 +53,18 @@ def add_page(resource: str, target_name: str, summary: str, model: type) -> None
         responses={**UNAUTHORIZED, **SITE_DOWN},
         name=f"read_{resource}",
     )
+
+
+@router.get(
+    "/grades",
+    summary="Current semester grades per course",
+    response_model=GradesPage,
+    responses={**UNAUTHORIZED, **SITE_DOWN},
+)
+def read_grades(scraper: SiteScraper = Depends(current_scraper)):
+    """Quiz 1, midterm, quiz 2, individual work and final for each current course, put together from the course pages
+    and the scores page. Slow: it reads every course, so cache the result."""
+    return grades.current_grades(scraper)
 
 
 for _resource, (_target, _summary, _model) in PAGES.items():

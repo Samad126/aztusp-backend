@@ -36,12 +36,12 @@ def open_task_file(scraper: SiteScraper, task_id: str, file_no: str):
     return open_attachment(scraper, TASK_TABLE, task_id, file_no)
 
 
-def task_detail(scraper: SiteScraper, lec_open_idx: str, task_id: str) -> dict:
+def task_detail(scraper: SiteScraper, lec_open_idx: str, task_id: str, params: dict[str, str] | None = None) -> dict:
     """One task as the site shows it when its `Movzu` is clicked in the tasks list.
 
     The site only serves this page to the POST its own script sends (the list's filters, which the page ignores).
     """
-    params = course_params(scraper, lec_open_idx)
+    params = params or course_params(scraper, lec_open_idx)
     url = urljoin(scraper.settings.dashboard_url, f"{DETAIL_PAGE}?t_idx={task_id}")
     soup = scraper.post_page(url, {**params, "page_num": "1", "page_list": "30", "field": "s_date", "sort": "ASC", "search_item": "subject", "search_word": ""})
 
