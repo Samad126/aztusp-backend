@@ -5,13 +5,13 @@ import re
 
 import requests
 
-from . import courses, tasks
+from . import courses
 from .client import SiteScraper
 from .targets import TARGETS_BY_NAME
 
 log = logging.getLogger(__name__)
 
-UNREADABLE = (requests.RequestException, courses.CourseNotFound, tasks.TaskNotFound)
+UNREADABLE = (requests.RequestException, courses.CourseNotFound)
 
 # Columns in the order the university grades them.
 COLUMNS = ("quiz1", "midterm", "quiz2", "individual_work", "final")
@@ -73,22 +73,18 @@ def _course_row(scraper: SiteScraper, course: dict, listing: list[dict], finals:
         log.warning("Course %s: scores not read for grades (%s)", idx, type(exc).__name__)
 
     try:
-        listed = courses.course_items(scraper, idx, "tasks", listing=listing)["items"]
-        params = courses.course_params(scraper, idx)
+        listed = [item for item in courses.course_items(scraper, idx, "tasks", listing=listing)["items"] if item.get("id")]
+        points = courses.task_scores(scraper, idx, [item["id"] for item in listed])
         quizzes_seen = 0
         for item in listed:
-            if not item.get("id"):
-                continue
-            task = tasks.task_detail(scraper, idx, item["id"], params)
-            kind = (task["task_type"] or "").lower()
+            kind = (item.get("task_type") or "").lower()
             if "məşğələ" not in kind and "seminar" not in kind:
                 continue
-            slot = classify(task["subject"], quizzes_seen)
-            if slot is None or row[slot] is not None or task["score"] is None:
+            slot = classify(item.get("subject", ""), quizzes_seen)
+            if slot is None or row[slot] is not None:
                 continue
             quizzes_seen += slot.startswith("quiz")
-            row[slot] = task["score"]
-            row["max"][slot] = task["max_score"]
+            row[slot] = points.get(item["id"])
     except UNREADABLE as exc:
         log.warning("Course %s: tasks not read for grades (%s)", idx, type(exc).__name__)
 

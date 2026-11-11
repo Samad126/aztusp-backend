@@ -1,3 +1,4 @@
+import json
 import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
@@ -150,6 +151,20 @@ def _fetch_tab(
     # The tab normally sits inside #secondary_content; if that box is empty or missing, use the whole page.
     box = soup.select_one("#secondary_content")
     return params, box if box is not None and box.find("table") else soup, course, url
+
+
+def task_scores(scraper: SiteScraper, lec_open_idx: str, task_ids: list[str]) -> dict[str, str | None]:
+    """The student's own score for each task (task id -> points, `None` until graded), the way the tasks tab loads them."""
+    if not task_ids:
+        return {}
+    url = urljoin(scraper.settings.dashboard_url, "/studies/lecture_task_ajax2.php")
+    response = scraper._request("GET", url, params={"lec_open_idx": lec_open_idx, "t_idx_arr[]": task_ids}, headers={"X-Requested-With": "XMLHttpRequest"})
+    response.raise_for_status()
+    try:
+        rows = json.loads(response.text.strip())["rows"]
+    except (ValueError, KeyError, TypeError):
+        return {}
+    return {str(row["t_idx"]): row.get("score") for row in rows if isinstance(row, dict) and "t_idx" in row}
 
 
 def _clean(text: str) -> str:
