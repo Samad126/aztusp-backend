@@ -10,3 +10,6 @@ venv/
 # Saved portal pages used while developing parsers (contain personal data)
 samples/
 *.sample.html
+
+# Claude Code local overrides
+.claude/settings.local.json
