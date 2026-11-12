@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 
@@ -41,13 +41,26 @@ class NotificationSettings(BaseModel):
         description="Watch everything about grades: the final score and grade, the points of each course before the final exam "
         "(Cari müvəffəqiyyət tab) and the quizzes, midterms and other assessments the teachers post (Qiymətləndirmə tab).",
     )
-    # "absences" is the name this was saved under before it was renamed; old clients that still send it keep working.
-    attendance: bool = Field(
+    absent: bool = Field(
         False,
-        validation_alias=AliasChoices("attendance", "absences"),
-        description="Watch attendance marks in the attendance journal (Davamiyyət). A session whose mark becomes absent "
-        "or present is sent.",
+        description="Send a message when a session in the attendance journal (Davamiyyət) becomes marked absent.",
     )
+    present: bool = Field(
+        False,
+        description="Send a message when a session in the attendance journal (Davamiyyət) becomes marked present.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_attendance(cls, data):
+        # Clients from before absent and present were separate send one `attendance` (once `absences`): both marks.
+        if isinstance(data, dict):
+            legacy = data.get("attendance", data.get("absences"))
+            if legacy is not None:
+                data = {k: v for k, v in data.items() if k not in ("attendance", "absences")}
+                data.setdefault("absent", legacy)
+                data.setdefault("present", legacy)
+        return data
 
     @field_validator("email")
     @classmethod
@@ -65,15 +78,16 @@ class NotificationsIn(NotificationSettings):
             "example": {
                 "email": "student@example.com",
                 "grades": True,
-                "attendance": True,
+                "absent": True,
+                "present": False,
             }
         }
     )
 
     @model_validator(mode="after")
     def something_to_watch(self):
-        if not (self.grades or self.attendance):
-            raise ValueError("choose something to watch: grades or attendance")
+        if not (self.grades or self.absent or self.present):
+            raise ValueError("choose something to watch: grades, absent or present")
         return self
 
 
@@ -83,7 +97,8 @@ class NotificationsOut(NotificationSettings):
             "example": {
                 "email": "student@example.com",
                 "grades": True,
-                "attendance": True,
+                "absent": True,
+                "present": False,
                 "telegram_linked": True,
                 "status": "ok",
                 "last_checked_at": "2026-10-10T11:30:00Z",

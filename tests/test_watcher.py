@@ -319,6 +319,8 @@ def subscription(
     email="student@example.com",
     chat="42",
     attendance=False,
+    absent=False,
+    present=False,
     assessments=False,
     course_scores=False,
 ):
@@ -327,7 +329,8 @@ def subscription(
         list(fields),
         status,
         telegram_linked=chat is not None,
-        attendance=attendance,
+        absent=absent or attendance,
+        present=present or attendance,
         assessments=assessments,
         course_scores=course_scores,
     )
@@ -721,13 +724,14 @@ def test_an_unreadable_course_is_not_reported_as_its_attendance_going_or_coming_
 
 
 def test_attendance_watch_can_be_on_without_grades():
-    assert NotificationsIn(grades=False, attendance=True).grades is False
+    assert NotificationsIn(grades=False, absent=True).grades is False
 
 
 def test_the_old_absences_name_still_turns_the_attendance_watch_on():
     # A client that still sends the old name must not switch the watch off when it saves its other settings.
-    assert NotificationsIn(grades=False, absences=True).attendance is True
-    assert NotificationsIn(grades=True, absences=False).attendance is False
+    assert NotificationsIn(grades=False, absences=True).absent is True
+    assert NotificationsIn(grades=False, absences=True).present is True
+    assert NotificationsIn(grades=True, absences=False).absent is False
     with pytest.raises(ValidationError, match="choose something to watch"):
         NotificationsIn(grades=False)
 
@@ -738,7 +742,7 @@ def test_saved_watches_read_back_as_one_grades_choice():
     assert NotificationsOut(**stored, fields=["final_score", "grade"]).grades is True
     assert NotificationsOut(**stored, fields=[], assessments=True).grades is True
     assert NotificationsOut(**stored, fields=[], course_scores=True).grades is True
-    assert NotificationsOut(**stored, fields=[], attendance=True).grades is False
+    assert NotificationsOut(**stored, fields=[], absent=True).grades is False
 
 
 def work(task_type="Sərbəst iş", end="27.10.2026", id="5", number="1", **extra):
@@ -1080,7 +1084,7 @@ def test_turning_notifications_off_keeps_the_password_and_deletes_the_results(st
 @needs_database
 def test_course_watches_are_saved_and_turning_one_off_forgets_only_its_results(store):
     user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
-    everything = Notifications("student@example.com", ["grade"], attendance=True, assessments=True, course_scores=True)
+    everything = Notifications("student@example.com", ["grade"], absent=True, present=True, assessments=True, course_scores=True)
     store.set_notifications(user.id, everything)
     for watch in ("attendance", "work", "scores"):
         store.save_course_snapshot(user.id, watch, {"courses": []})
@@ -1092,7 +1096,7 @@ def test_course_watches_are_saved_and_turning_one_off_forgets_only_its_results(s
     saved = store.get_notifications(user.id)
     assert (saved.attendance, saved.assessments, saved.course_scores) == (True, True, True)
 
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], attendance=True))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], absent=True, present=True))
 
     assert store.get_notifications(user.id).assessments is False
     assert store.load_course_snapshot(user.id, "attendance") == {"courses": []}
@@ -1122,7 +1126,7 @@ def test_absence_snapshots_from_the_old_table_move_to_course_snapshots(store):
 @needs_database
 def test_the_absences_setting_and_snapshots_keep_their_values_under_the_attendance_name(store):
     user = store.get_by_token(store.upsert_login("M1", "{}", "site-pass"))
-    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], attendance=True))
+    store.set_notifications(user.id, Notifications("student@example.com", ["grade"], absent=True, present=True))
     store.save_course_snapshot(user.id, "attendance", {"courses": [{"lec_open_idx": "7"}]})
     with store._connect() as db:
         # What the previous version stored under the old names.
@@ -1172,3 +1176,26 @@ def test_an_expired_token_leaves_the_saved_password_for_the_watcher(store):
     assert store.get_by_token(token) is None
     [subscription] = store.subscribers()
     assert subscription.password == "site-pass"
+
+
+def _check_after(campus, sent, mark_before, mark_now, **flags):
+    other = journal("Physics", ("16.09", "present"))
+    campus["M1"] = {"7": journal("Math", ("15.09", mark_before)), "8": other}
+    watcher = Watcher(SETTINGS, WATCH, FakeStore([subscription(1, fields=(), **flags)]))
+    watcher.check_all()  # baseline
+    campus["M1"]["7"] = journal("Math", ("15.09", mark_now))
+    watcher.check_all()
+
+
+def test_absent_only_sends_new_absences_not_presences(portal, campus, sent):
+    _check_after(campus, sent, "not_entered", "absent", absent=True)
+    assert len(sent) == 1
+    _check_after(campus, sent[:0], "absent", "present", absent=True)
+    assert len(sent) == 1
+
+
+def test_present_only_sends_new_presences_not_absences(portal, campus, sent):
+    _check_after(campus, sent, "not_entered", "absent", present=True)
+    assert sent == []
+    _check_after(campus, sent, "absent", "present", present=True)
+    assert len(sent) == 1

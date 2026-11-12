@@ -62,7 +62,8 @@ def save_notifications(
         Notifications(
             email=body.email,
             fields=list(DEFAULT_FIELDS) if body.grades else [],
-            attendance=body.attendance,
+            absent=body.absent,
+            present=body.present,
             assessments=body.grades,
             course_scores=body.grades,
         ),

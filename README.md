@@ -46,7 +46,7 @@ raw OpenAPI document is at `/openapi.json`.
 | `PUT` | `/api/v1/me/photo` | ✔ | Upload or replace the profile photo (JPEG, PNG or WebP as the raw request body, 10 MB at most) |
 | `GET` | `/api/v1/me/photo` | ✔ | The profile photo |
 | `DELETE` | `/api/v1/me/photo` | ✔ | Delete the profile photo |
-| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels and what is watched (grades, attendance), status of the last check |
+| `GET` | `/api/v1/me/notifications` | ✔ | Change notifications: channels and what is watched (grades, absent, present), status of the last check |
 | `PUT` | `/api/v1/me/notifications` | ✔ | Turn notifications on or update them, with the password saved at login |
 | `DELETE` | `/api/v1/me/notifications` | ✔ | Turn notifications off and delete the saved results |
 | `GET` | `/api/v1/me/telegram` | ✔ | Whether a Telegram chat is connected |
@@ -113,7 +113,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/m
 # 4. turn change notifications on (email is optional once Telegram is connected)
 curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   http://localhost:8000/api/v1/me/notifications \
-  -d '{"email": "student@example.com", "grades": true, "attendance": true}'
+  -d '{"email": "student@example.com", "grades": true, "absent": true, "present": false}'
 ```
 
 In Swagger UI, call `POST /api/v1/auth/login`, click **Authorize**, and paste the token.
@@ -301,7 +301,7 @@ and results link to the grades page. Each course's university link is the same t
 3. `GET /api/v1/me/telegram` returns `{"linked": true}` once it worked.
 
 The code works once and expires after 15 minutes. Then the student turns notifications on with
-`PUT /api/v1/me/notifications`, sending `grades` and/or `attendance` and, optionally, an email. The password saved at login is
+`PUT /api/v1/me/notifications`, sending `grades`, `absent` and/or `present` and, optionally, an email. The password saved at login is
 used, so the student doesn't type it again. An email, a connected Telegram, or both are accepted. If the site rejects
 the saved password (for example after a change made on the site), the student logs in again, which saves the new one.
 The response includes:

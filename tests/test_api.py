@@ -253,7 +253,7 @@ def test_turning_notifications_on_never_returns_the_password(client):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["email"] == "student@example.com" and body["grades"] is True and body["attendance"] is False
+    assert body["email"] == "student@example.com" and body["grades"] is True and body["absent"] is False and body["present"] is False
     assert body["status"] == "ok" and body["last_checked_at"] is None and body["telegram_linked"] is False
     assert "password" not in body and "good" not in response.text
     assert client.get("/api/v1/me/notifications", headers=headers).json() == body
@@ -306,11 +306,19 @@ def test_invalid_notification_settings_are_rejected(client, change):
 def test_attendance_can_be_watched_without_grades(client):
     headers = login(client)
 
-    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "grades": False, "attendance": True}, headers=headers)
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "grades": False, "absent": True}, headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["attendance"] is True and response.json()["grades"] is False
-    assert client.get("/api/v1/me/notifications", headers=headers).json()["attendance"] is True
+    assert response.json()["absent"] is True and response.json()["present"] is False and response.json()["grades"] is False
+    assert client.get("/api/v1/me/notifications", headers=headers).json()["absent"] is True
+
+
+def test_the_old_attendance_setting_turns_on_both_marks(client):
+    headers = login(client)
+
+    response = client.put("/api/v1/me/notifications", json={**NOTIFICATIONS, "grades": False, "attendance": True}, headers=headers)
+
+    assert response.json()["absent"] is True and response.json()["present"] is True
 
 
 def test_grades_turn_on_the_result_and_both_course_watches(client, store):
@@ -319,7 +327,7 @@ def test_grades_turn_on_the_result_and_both_course_watches(client, store):
     client.put("/api/v1/me/notifications", json=NOTIFICATIONS, headers=headers)
 
     saved = store.get_notifications(user_of(store, headers).id)
-    assert saved.fields == ["final_score", "grade"] and saved.assessments and saved.course_scores and not saved.attendance
+    assert saved.fields == ["final_score", "grade"] and saved.assessments and saved.course_scores and not saved.attendance and not saved.absent and not saved.present
 
 
 def test_turning_notifications_off(client):
