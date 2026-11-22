@@ -63,7 +63,7 @@ app = FastAPI(
     title="AZTUSP Backend",
     summary="Per-user scraping API for the university student portal.",
     description=DESCRIPTION,
-    version="6.2.0",
+    version="6.2.1",
     license_info={"name": "MIT", "identifier": "MIT"},
     openapi_tags=TAGS,
 )

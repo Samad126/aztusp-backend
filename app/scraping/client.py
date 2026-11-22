@@ -306,7 +306,9 @@ class SiteScraper:
         # The change password form is on that host too, so for it only a redirect to the sign-in root counts.
         if password_page:
             return _same_page(response.url, self.settings.login_url)
-        return urlparse(response.url).netloc == urlparse(self.settings.login_url).netloc
+        if urlparse(response.url).netloc == urlparse(self.settings.login_url).netloc:
+            return True
+        return _is_close_stub(response)
 
     def _save_cookies(self) -> None:
         if self._on_save:
@@ -325,6 +327,20 @@ def form_payload(form: Tag) -> dict[str, str]:
             continue
         payload[name] = element.get("value", "")
     return payload
+
+
+# A dashboard session that ran out is not always redirected to the SSO: the dashboard can also answer 200 with a tiny
+# page whose only job is to close the window. Real pages are tens of kilobytes, so a short page with that script is the
+# logged-out answer. (Seen when the saved session was ended on the portal side.)
+CLOSE_STUB_MAX_CHARS = 5000
+CLOSE_STUB_MARKER = "window.open('', '_self')"
+
+
+def _is_close_stub(response: requests.Response) -> bool:
+    if not getattr(response, "_content_consumed", True):
+        return False  # a streamed download: reading it here would use up the body
+    text = response.text
+    return len(text) < CLOSE_STUB_MAX_CHARS and CLOSE_STUB_MARKER in text
 
 
 def _same_page(url_a: str, url_b: str) -> bool:

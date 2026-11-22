@@ -67,3 +67,35 @@ def test_it_gives_up_when_the_new_session_is_logged_out_too():
     with pytest.raises(LoginError):
         scraper.fetch("https://d.example.com/page")
     assert logins == ["secret"]
+
+
+STUB = FakeResponse(
+    "https://d.example.com/page",
+    "<script language=\"javascript\"> if (parent) { parent.window.open('', '_self'); parent.window.close(); } "
+    "else { window.open('', '_self'); self.close(); } </script>",
+)
+
+
+def test_the_dashboards_close_window_stub_counts_as_logged_out():
+    # The dashboard answers a dead session with 200 and this page instead of a redirect to the sign-in page.
+    scraper = SiteScraper(SETTINGS, "u")
+    assert scraper._looks_logged_out(STUB)
+
+
+def test_a_long_page_that_mentions_the_script_is_not_the_stub():
+    scraper = SiteScraper(SETTINGS, "u")
+    page = FakeResponse("https://d.example.com/page", "<p>x</p>" * 1000 + "window.open('', '_self')")
+    assert not scraper._looks_logged_out(page)
+
+
+def test_the_stub_is_replaced_with_a_new_session_for_students_who_stay_signed_in():
+    logins = []
+    scraper = scraper_with(lambda: "secret", [STUB, IN], logins)
+    assert scraper.fetch("https://d.example.com/page").text == "ok"
+    assert logins == ["secret"]
+
+
+def test_the_stub_asks_for_a_login_otherwise_instead_of_returning_an_empty_page():
+    scraper = scraper_with(None, [STUB], [])
+    with pytest.raises(LoginError):
+        scraper.fetch("https://d.example.com/page")
