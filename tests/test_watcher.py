@@ -1171,7 +1171,7 @@ def test_an_expired_token_leaves_the_saved_password_for_the_watcher(store):
     user = store.get_by_token(token)
     store.set_notifications(user.id, Notifications("student@example.com", ["grade"]))
     with store._connect() as db:
-        db.execute("UPDATE users SET token_expires_at = now() - interval '1 minute'")
+        db.execute("UPDATE sessions SET expires_at = now() - interval '1 minute'")
 
     assert store.get_by_token(token) is None
     [subscription] = store.subscribers()

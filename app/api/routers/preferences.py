@@ -19,7 +19,7 @@ def read_preferences(user: User = Depends(current_user), store: UserStore = Depe
 def save_preferences(body: Preferences, user: User = Depends(current_user), store: UserStore = Depends(get_store)):
     """Replace the preferences.
 
-    With `stay_signed_in` on, the API token is renewed each time it is used (30 days without use end it) and the site session
+    With `stay_signed_in` on, the API token is renewed each time it is used (it does not run out until the student signs out of that device) and the site session
     is opened again with the **encrypted** password saved at login when it runs out, so the student does not type it again.
     It is off by default. Signing out still ends the session; the next login keeps the setting.
     """

@@ -26,15 +26,15 @@ site password, and set a profile photo. Students can also get a Telegram or emai
 4. For result messages: `POST /me/telegram/link` and open the link in Telegram, then `PUT /me/notifications` with the fields to watch. Your login password is saved and used for the checks, and an email is optional once Telegram is connected. See *Notifications*.
 5. To change the site password: `POST /me/password` with `password`, `confirm_password` and optionally `current_password` (else the saved one is used). `changed` is `true` when the site then signs in with the new password; otherwise `messages` has the site's answer. After a change, the saved password is updated too, so notifications keep working.
 6. To set a profile photo: `PUT /me/photo` with the image file as the request body (JPEG, PNG or WebP, 10 MB at most). `GET /me/photo` returns it and `DELETE /me/photo` removes it. The photo is kept in this service, not on the university site.
-7. To sign out: `POST /auth/logout`. It also signs out of the university site and ends this login, so the token stops working. Your saved data is kept, so change notifications keep running.
+7. To sign out: `POST /auth/logout`. It ends this device's login, so its token stops working; other devices stay signed in. When it was the last device it also signs out of the university site. Your saved data is kept, so change notifications keep running.
 
 ## Privacy
 
 * Your site password is kept **encrypted** from the login onward, so change notifications can sign in every 30 minutes and check your scores. A password change or a new login replaces it. Logging out and turning notifications off keep it.
 * Your email, watched fields, last results and Telegram chat are kept only while notifications are on. Turning them off deletes the email and results (the Telegram link stays until you disconnect it). Logging out does not change them.
-* Only the resulting site session cookies are kept, **encrypted** in the database. Logging out also signs out of the university dashboard and SSO, and drops those cookies.
+* Only the resulting site session cookies are kept, **encrypted** in the database. Logging out of the last device also signs out of the university dashboard and SSO, and drops those cookies.
 * Your profile photo is kept until you replace or delete it. Logging out keeps it.
-* Your API token is stored as a SHA-256 hash, so it cannot be recovered. It expires after 1 day. Logging in again issues a new token and invalidates the old one. With `stay_signed_in` on (`PUT /me/preferences`, off by default) it is renewed on use instead, and the site session is reopened with the saved password when it runs out.
+* Your API token is stored as a SHA-256 hash, so it cannot be recovered. It expires after 1 day. Each login issues a token for that device (up to 10 devices); signing in on another device does not sign this one out. With `stay_signed_in` on (`PUT /me/preferences`, off by default) it is renewed on use instead, and the site session is reopened with the saved password when it runs out.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
 """
 
@@ -63,7 +63,7 @@ app = FastAPI(
     title="AZTUSP Backend",
     summary="Per-user scraping API for the university student portal.",
     description=DESCRIPTION,
-    version="6.1.0",
+    version="6.2.0",
     license_info={"name": "MIT", "identifier": "MIT"},
     openapi_tags=TAGS,
 )

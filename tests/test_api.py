@@ -496,7 +496,7 @@ def test_a_token_lasts_one_day(client, store):
     login(client)
 
     with store._connect() as db:
-        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 86400 FROM sessions").fetchone()
     assert 0.99 < float(days_left) <= 1
 
 
@@ -505,15 +505,7 @@ def test_a_token_stops_working_when_it_expires(client, store):
     assert client.get("/api/v1/me/notifications", headers=headers).status_code == 404  # signed in; notifications are just off
 
     with store._connect() as db:
-        db.execute("UPDATE users SET token_expires_at = now() - interval '1 minute'")
-
-    assert client.get("/api/v1/me/notifications", headers=headers).status_code == 401
-
-
-def test_a_token_without_an_expiry_needs_a_login(client, store):
-    headers = login(client)
-    with store._connect() as db:
-        db.execute("UPDATE users SET token_expires_at = NULL")
+        db.execute("UPDATE sessions SET expires_at = now() - interval '1 minute'")
 
     assert client.get("/api/v1/me/notifications", headers=headers).status_code == 401
 
@@ -639,11 +631,11 @@ def test_preferences_need_a_token(client):
 
 def test_staying_signed_in_lengthens_the_token_and_turning_it_off_shortens_it(client, store):
     headers = login(client)
-    days = "SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users"
+    days = "SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 86400 FROM sessions"
 
     client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=headers)
     with store._connect() as db:
-        assert float(db.execute(days).fetchone()[0]) > 29
+        assert float(db.execute(days).fetchone()[0]) > 1400
 
     client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": False}, headers=headers)
     with store._connect() as db:
@@ -655,26 +647,78 @@ def test_a_new_login_keeps_the_long_token_for_students_who_stay_signed_in(client
     client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=headers)
     login(client)
     with store._connect() as db:
-        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
-    assert float(days_left) > 29
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 86400 FROM sessions").fetchone()
+    assert float(days_left) > 1400
 
 
 def test_using_the_token_renews_it_for_students_who_stay_signed_in(client, store):
     headers = login(client)
     client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=headers)
     with store._connect() as db:
-        db.execute("UPDATE users SET token_expires_at = now() + interval '2 days'")
+        db.execute("UPDATE sessions SET expires_at = now() + interval '2 days'")
     assert client.get("/api/v1/me/preferences", headers=headers).status_code == 200
     with store._connect() as db:
-        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
-    assert float(days_left) > 29
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 86400 FROM sessions").fetchone()
+    assert float(days_left) > 1400
 
 
 def test_a_token_is_not_renewed_when_staying_signed_in_is_off(client, store):
     headers = login(client)
     with store._connect() as db:
-        db.execute("UPDATE users SET token_expires_at = now() + interval '2 hours'")
+        db.execute("UPDATE sessions SET expires_at = now() + interval '2 hours'")
     client.get("/api/v1/me/preferences", headers=headers)
     with store._connect() as db:
-        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (expires_at - now())) / 86400 FROM sessions").fetchone()
     assert float(days_left) < 1
+
+
+def test_logging_in_on_another_device_keeps_the_first_one_signed_in(client):
+    desktop = login(client)
+    web = login(client)
+    assert desktop != web
+    assert client.get("/api/v1/me/preferences", headers=desktop).status_code == 200
+    assert client.get("/api/v1/me/preferences", headers=web).status_code == 200
+
+
+def test_logging_out_ends_only_that_device(client, monkeypatch):
+    desktop = login(client)
+    web = login(client)
+    logged_out = []
+    monkeypatch.setattr(SiteScraper, "log_out", lambda self: logged_out.append(1))
+
+    assert client.post("/api/v1/auth/logout", headers=desktop).status_code == 200
+
+    assert client.get("/api/v1/me/preferences", headers=desktop).status_code == 401
+    assert client.get("/api/v1/me/preferences", headers=web).status_code == 200
+    assert logged_out == []  # the other device still uses the site session
+
+
+def test_the_last_device_to_log_out_also_logs_out_of_the_site_and_drops_the_cookies(client, store, monkeypatch):
+    desktop = login(client)
+    web = login(client)
+    logged_out = []
+    monkeypatch.setattr(SiteScraper, "log_out", lambda self: logged_out.append(1))
+
+    client.post("/api/v1/auth/logout", headers=desktop)
+    client.post("/api/v1/auth/logout", headers=web)
+
+    assert logged_out == [1]
+    with store._connect() as db:
+        assert db.execute("SELECT cookies_enc FROM users").fetchone()[0] is None
+
+
+def test_the_oldest_devices_beyond_the_limit_are_signed_out(client):
+    from app.db import MAX_SESSIONS
+
+    tokens = [login(client) for _ in range(MAX_SESSIONS + 1)]
+    assert client.get("/api/v1/me/preferences", headers=tokens[0]).status_code == 401
+    assert client.get("/api/v1/me/preferences", headers=tokens[-1]).status_code == 200
+
+
+def test_turning_stay_signed_in_on_lengthens_every_device(client, store):
+    first = login(client)
+    login(client)
+    client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=first)
+    with store._connect() as db:
+        (shortest,) = db.execute("SELECT MIN(EXTRACT(EPOCH FROM (expires_at - now())) / 86400) FROM sessions").fetchone()
+    assert float(shortest) > 1400

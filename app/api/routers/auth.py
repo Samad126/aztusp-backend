@@ -32,8 +32,8 @@ def login(
     """Sign in to the university site with the user's own account and return an API token.
 
     The session cookies and the password are kept **encrypted**. The password lets change notifications sign in
-    later without asking for it again, and `POST /me/password` keeps it up to date. Logging in again replaces the
-    previous token and the saved password. The token lasts 1 day.
+    later without asking for it again, and `POST /me/password` keeps it up to date. Logging in again adds a token for
+    that device, so other devices stay signed in, and replaces the saved password. The token lasts 1 day.
     """
     scraper = SiteScraper(settings, credentials.username)
     scraper.login(credentials.password)
@@ -43,19 +43,22 @@ def login(
 
 @router.post(
     "/logout",
-    summary="Log out of the university site and end the API session",
+    summary="Log out of this device",
     response_model=OkResponse,
     responses=UNAUTHORIZED,
 )
 def logout(scraper: SiteScraper = Depends(current_scraper), store: UserStore = Depends(get_store)):
-    """Log out of the university dashboard and SSO too, then end the API session: the token and the session cookies stop working.
+    """End this device's API session: its token stops working. Other devices stay signed in.
 
+    When this was the last signed-in device, the university dashboard and SSO are logged out too and the site session
+    cookies are dropped; otherwise the site session is left alone, since the other devices share it.
     The saved password, notification settings, Telegram link and profile photo are kept, so change notifications keep running.
     The session ends even when the university site cannot be reached. A new login is needed afterwards.
     """
-    try:
-        scraper.log_out()
-    except requests.RequestException as exc:
-        log.warning("Could not log %s out of the university site: %s", scraper.user.site_username, exc)
-    store.end_session(scraper.user.id)
+    if not store.has_other_sessions(scraper.user):
+        try:
+            scraper.log_out()
+        except requests.RequestException as exc:
+            log.warning("Could not log %s out of the university site: %s", scraper.user.site_username, exc)
+    store.end_session(scraper.user)
     return {"ok": True}

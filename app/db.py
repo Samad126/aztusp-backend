@@ -13,9 +13,12 @@ log = logging.getLogger(__name__)
 
 LINK_CODE_MINUTES = 15
 TOKEN_DAYS = 1
-# Students who turned on "stay signed in" keep their token this long after their last request, and the service signs in
+# Students who turned on "stay signed in" keep their token for this long (four years, the length of a bachelor degree, renewed on use: in practice it never
+# runs out until they sign out of the device), and the service signs in
 # to the site again by itself when the site session runs out.
-STAY_SIGNED_IN_DAYS = 30
+STAY_SIGNED_IN_DAYS = 1461
+# A student can be signed in on several devices at once, each with its own token. The oldest ones go beyond this.
+MAX_SESSIONS = 10
 START_PAGES = ("home", "courses", "schedule", "grades", "attendance", "notices")
 
 SCHEMA = (
@@ -35,6 +38,26 @@ SCHEMA = (
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ",
     # Databases created before the password was stored at login get the column here.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc BYTEA",
+    # One row per signed-in device. Tokens used to live on the user (one at a time, so a login on one device ended the
+    # session on the others). Existing tokens are moved here, then cleared from the user. Runs on every start; does
+    # nothing once moved.
+    """
+    CREATE TABLE IF NOT EXISTS sessions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS sessions_user_id ON sessions (user_id)",
+    "ALTER TABLE users ALTER COLUMN token_hash DROP NOT NULL",
+    """
+    INSERT INTO sessions (user_id, token_hash, expires_at)
+        SELECT id, token_hash, token_expires_at FROM users WHERE token_hash IS NOT NULL AND token_expires_at IS NOT NULL
+        ON CONFLICT DO NOTHING
+    """,
+    "UPDATE users SET token_hash = NULL, token_expires_at = NULL WHERE token_hash IS NOT NULL",
     # Settings of the student that follow them to every device. Both are off/home until the student changes them.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS start_page TEXT NOT NULL DEFAULT 'home'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS stay_signed_in BOOLEAN NOT NULL DEFAULT FALSE",
@@ -176,6 +199,7 @@ class User:
     site_username: str
     cookies: str | None  # decrypted JSON, None if absent or unreadable
     stay_signed_in: bool = False  # the token is renewed on use and the site session is re-opened with the saved password
+    session_id: int | None = None  # the signed-in device (token) this user object was found by
 
 
 @dataclass(frozen=True)
@@ -237,33 +261,37 @@ class UserStore:
         return psycopg.connect(self.database_url)
 
     def upsert_login(self, site_username: str, cookies: str, password: str) -> str:
-        """Create or update the user after a successful site login; returns a fresh API token that lasts TOKEN_DAYS.
+        """Create or update the user after a successful site login; returns a fresh API token for this device.
 
-        The password is kept encrypted, so change notifications can sign in later without asking for it again.
+        Other devices stay signed in: each login adds a token. The token lasts TOKEN_DAYS, or STAY_SIGNED_IN_DAYS for a
+        student who stays signed in. The password is kept encrypted, so change notifications can sign in later without
+        asking for it again.
         """
         token = secrets.token_urlsafe(32)
         encrypted_cookies = self.fernet.encrypt(cookies.encode())
         encrypted_password = self.fernet.encrypt(password.encode())
         with self._connect() as db:
+            user_id, stay = db.execute(
+                "INSERT INTO users (site_username, cookies_enc, password_enc) VALUES (%s, %s, %s) "
+                "ON CONFLICT(site_username) DO UPDATE SET cookies_enc = excluded.cookies_enc, "
+                "password_enc = excluded.password_enc RETURNING id, stay_signed_in",
+                (site_username, encrypted_cookies, encrypted_password),
+            ).fetchone()
             db.execute(
-                "INSERT INTO users (site_username, token_hash, token_expires_at, cookies_enc, password_enc) "
-                "VALUES (%s, %s, now() + make_interval(days => %s), %s, %s) "
-                "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, "
-                "token_expires_at = excluded.token_expires_at, cookies_enc = excluded.cookies_enc, "
-                "password_enc = excluded.password_enc",
-                (site_username, _hash(token), TOKEN_DAYS, encrypted_cookies, encrypted_password),
+                "INSERT INTO sessions (user_id, token_hash, expires_at) VALUES (%s, %s, now() + make_interval(days => %s))",
+                (user_id, _hash(token), STAY_SIGNED_IN_DAYS if stay else TOKEN_DAYS),
             )
-            # A student who stays signed in keeps the longer lifetime on every new login.
+            # Expired tokens, and the oldest ones beyond the limit, are dropped here so the table does not grow.
+            db.execute("DELETE FROM sessions WHERE user_id = %s AND expires_at <= now()", (user_id,))
             db.execute(
-                "UPDATE users SET token_expires_at = now() + make_interval(days => %s) "
-                "WHERE site_username = %s AND stay_signed_in",
-                (STAY_SIGNED_IN_DAYS, site_username),
+                "DELETE FROM sessions WHERE user_id = %s AND id NOT IN "
+                "(SELECT id FROM sessions WHERE user_id = %s ORDER BY created_at DESC, id DESC LIMIT %s)",
+                (user_id, user_id, MAX_SESSIONS),
             )
             # The login proves this password works, so a wrong-password status from an older one is cleared.
             db.execute(
-                "UPDATE notification_settings SET status = 'ok', last_checked_at = NULL, updated_at = now() "
-                "WHERE user_id = (SELECT id FROM users WHERE site_username = %s)",
-                (site_username,),
+                "UPDATE notification_settings SET status = 'ok', last_checked_at = NULL, updated_at = now() WHERE user_id = %s",
+                (user_id,),
             )
         return token
 
@@ -272,46 +300,56 @@ class UserStore:
 
         A student who stays signed in gets the token renewed, so it only expires after STAY_SIGNED_IN_DAYS of not using the app.
         """
-        user = self._get_user("token_hash = %s AND token_expires_at > now()", _hash(token))
-        if user and user.stay_signed_in:
-            with self._connect() as db:
-                # Only written when a day or more has passed, so a busy page does not write on every request.
-                db.execute(
-                    "UPDATE users SET token_expires_at = now() + make_interval(days => %s) "
-                    "WHERE id = %s AND token_expires_at < now() + make_interval(days => %s)",
-                    (STAY_SIGNED_IN_DAYS, user.id, STAY_SIGNED_IN_DAYS - 1),
-                )
-        return user
-
-    def _get_user(self, condition: str, value: object) -> User | None:
         with self._connect() as db:
             row = db.execute(
-                f"SELECT id, site_username, cookies_enc, stay_signed_in FROM users WHERE {condition}", (value,)
+                "SELECT u.id, u.site_username, u.cookies_enc, u.stay_signed_in, s.id FROM sessions s "
+                "JOIN users u ON u.id = s.user_id WHERE s.token_hash = %s AND s.expires_at > now()",
+                (_hash(token),),
             ).fetchone()
-        return self._user(row) if row else None
+            if row is None:
+                return None
+            if row[3]:
+                # Only written when a day or more has passed, so a busy page does not write on every request.
+                db.execute(
+                    "UPDATE sessions SET expires_at = now() + make_interval(days => %s) "
+                    "WHERE id = %s AND expires_at < now() + make_interval(days => %s)",
+                    (STAY_SIGNED_IN_DAYS, row[4], STAY_SIGNED_IN_DAYS - 1),
+                )
+        return self._user(row)
 
     def _user(self, row: tuple) -> User:
-        """A user from (id, site_username, cookies_enc, stay_signed_in), with the cookies decrypted."""
+        """A user from (id, site_username, cookies_enc, stay_signed_in, session id), with the cookies decrypted."""
         cookies = None
         if row[2]:
             try:
                 cookies = self.fernet.decrypt(row[2]).decode()
             except InvalidToken:
                 log.warning("Stored cookies for user %s could not be decrypted", row[0])
-        return User(id=row[0], site_username=row[1], cookies=cookies, stay_signed_in=row[3])
+        return User(id=row[0], site_username=row[1], cookies=cookies, stay_signed_in=row[3], session_id=row[4])
 
     def save_cookies(self, user_id: int, cookies: str) -> None:
         with self._connect() as db:
             db.execute("UPDATE users SET cookies_enc = %s WHERE id = %s", (self.fernet.encrypt(cookies.encode()), user_id))
 
-    def end_session(self, user_id: int) -> None:
-        """Log out: the API token and the site session cookies stop working. Everything else stays, so change notifications,
-        the saved password, the Telegram link and the profile photo keep working."""
-        # The token is replaced by a random one nobody has, so the old token can no longer match.
+    def has_other_sessions(self, user: User) -> bool:
+        """Whether the student is still signed in on another device."""
         with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM sessions WHERE user_id = %s AND id <> %s AND expires_at > now() LIMIT 1",
+                (user.id, user.session_id),
+            ).fetchone()
+        return row is not None
+
+    def end_session(self, user: User) -> None:
+        """Log out of this device: its token stops working. When it was the last device, the site session cookies are
+        dropped too. Everything else stays, so change notifications, the saved password, the Telegram link and the profile
+        photo keep working, and the other devices stay signed in."""
+        with self._connect() as db:
+            db.execute("DELETE FROM sessions WHERE id = %s", (user.session_id,))
             db.execute(
-                "UPDATE users SET token_hash = %s, token_expires_at = NULL, cookies_enc = NULL WHERE id = %s",
-                (_hash(secrets.token_urlsafe(32)), user_id),
+                "UPDATE users SET cookies_enc = NULL WHERE id = %s "
+                "AND NOT EXISTS (SELECT 1 FROM sessions WHERE user_id = %s AND expires_at > now())",
+                (user.id, user.id),
             )
 
     def get_preferences(self, user_id: int) -> tuple[str, bool]:
@@ -323,15 +361,22 @@ class UserStore:
         return (start_page if start_page in START_PAGES else "home", stay)
 
     def set_preferences(self, user_id: int, start_page: str, stay_signed_in: bool) -> None:
-        """Save the preferences. The token lifetime follows the switch at once: turning it on gives the long lifetime,
-        turning it off puts the token back to the normal one (the site session itself is not touched)."""
+        """Save the preferences. The token lifetime of every device follows the switch at once: turning it on gives the
+        long lifetime, turning it off puts the tokens back to the normal one (the site session itself is not touched)."""
         with self._connect() as db:
             db.execute(
-                "UPDATE users SET start_page = %s, stay_signed_in = %s, token_expires_at = CASE WHEN %s "
-                "THEN now() + make_interval(days => %s) "
-                "ELSE LEAST(token_expires_at, now() + make_interval(days => %s)) END WHERE id = %s",
-                (start_page, stay_signed_in, stay_signed_in, STAY_SIGNED_IN_DAYS, TOKEN_DAYS, user_id),
+                "UPDATE users SET start_page = %s, stay_signed_in = %s WHERE id = %s", (start_page, stay_signed_in, user_id)
             )
+            if stay_signed_in:
+                db.execute(
+                    "UPDATE sessions SET expires_at = now() + make_interval(days => %s) WHERE user_id = %s AND expires_at > now()",
+                    (STAY_SIGNED_IN_DAYS, user_id),
+                )
+            else:
+                db.execute(
+                    "UPDATE sessions SET expires_at = LEAST(expires_at, now() + make_interval(days => %s)) WHERE user_id = %s",
+                    (TOKEN_DAYS, user_id),
+                )
 
     def save_password(self, user_id: int, password: str) -> None:
         """Replace the saved password after a site password change. Clears a wrong-password status, so the watcher signs

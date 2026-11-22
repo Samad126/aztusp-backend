@@ -13,7 +13,7 @@ pages, and returns structured data with English field names.
 ## How it works
 
 1. `POST /api/v1/auth/login` with the site username and password. The service signs in
-   to the portal and returns an API token, which lasts 1 day.
+   to the portal and returns an API token for that device, which lasts 1 day (until sign out with "stay signed in").
 2. Every other request sends that token as `Authorization: Bearer <token>`.
 3. The service loads that user's saved portal session, scrapes the requested page, and returns JSON.
 4. Students can also turn on change notifications, so they get a message when a watched result, attendance, individual work or course score changes. See [Grade watcher](#grade-watcher).
@@ -25,7 +25,7 @@ pages, and returns structured data with English field names.
 - The portal's **session cookies** are stored, **encrypted** (Fernet) in PostgreSQL.
 - The **profile photo** is stored in this service's database, not on the university site. It is kept until the student replaces or deletes it. Logging out keeps it.
 - Logging out also signs out of the university dashboard and SSO, and drops the session cookies. If the university site can't be reached, the API session still ends.
-- API tokens are stored as **SHA-256 hashes**; a lost token cannot be recovered, only replaced by logging in again. Tokens expire after 1 day, so the user logs in again then.
+- API tokens are stored as **SHA-256 hashes**, one per signed-in device (up to 10), so logging in on another device does not sign out the first. A lost token cannot be recovered, only replaced by logging in again. Tokens expire after 1 day, or never, until sign out, when the student turned on "stay signed in" (`PUT /me/preferences`).
 - When the portal session expires the API answers `401` and the user logs in again.
 
 ## API
