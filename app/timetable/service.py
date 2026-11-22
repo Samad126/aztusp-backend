@@ -25,6 +25,7 @@ def read_timetable(scraper: SiteScraper, source: TimetableSource | None, view: S
 
     groups = courses.student_groups(scraper)
     if not groups:
+        log.warning("No group code found in the course names, so the timetable is empty")
         return _empty()
 
     try:
@@ -34,6 +35,7 @@ def read_timetable(scraper: SiteScraper, source: TimetableSource | None, view: S
         log.exception("Could not search the timetable channel for groups %s", groups)
         return _empty()
     if not found:
+        log.warning("None of the groups %s is in the newest %s timetable PDFs", groups, source.search_limit)
         return _empty()
 
     return {
