@@ -99,3 +99,29 @@ def test_the_stub_asks_for_a_login_otherwise_instead_of_returning_an_empty_page(
     scraper = scraper_with(None, [STUB], [])
     with pytest.raises(LoginError):
         scraper.fetch("https://d.example.com/page")
+
+
+def test_a_page_without_the_expected_content_gets_a_new_session_for_students_who_stay_signed_in():
+    from app.scraping.targets import TARGETS_BY_NAME
+
+    target = TARGETS_BY_NAME["scores"]
+    empty = FakeResponse("https://d.example.com/telebe/score_view.php", "<html><title>Wait</title><p>nothing here</p></html>")
+    page = FakeResponse(
+        "https://d.example.com/telebe/score_view.php",
+        "<table id='datatable-buttons'><tr><th>Semestr</th></tr><tr><td>1</td></tr></table>",
+    )
+    logins = []
+    scraper = scraper_with(lambda: "secret", [empty, page], logins)
+
+    result = scraper.scrape(target)
+
+    assert logins == ["secret"]
+    assert result["tables"]["semesters"]
+
+
+def test_a_page_without_the_expected_content_is_left_as_it_is_without_a_saved_password():
+    from app.scraping.targets import TARGETS_BY_NAME
+
+    empty = FakeResponse("https://d.example.com/telebe/score_view.php", "<p>nothing here</p>")
+    scraper = scraper_with(None, [empty], [])
+    assert scraper.scrape(TARGETS_BY_NAME["scores"])["tables"]["semesters"] == []

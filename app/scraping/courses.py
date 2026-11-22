@@ -44,6 +44,14 @@ PLAN_TABLE_MAP = {
 def list_courses(scraper: SiteScraper) -> list[dict]:
     """Courses linked from the dashboard home page, with the ids the course pages need."""
     soup = scraper.fetch(scraper.settings.dashboard_url)
+    courses = _course_links(soup)
+    if not courses and scraper.sign_in_again():
+        # No course at all may be a dead site session that did not redirect; one more try with a new session.
+        courses = _course_links(scraper.fetch(scraper.settings.dashboard_url))
+    return courses
+
+
+def _course_links(soup: BeautifulSoup) -> list[dict]:
     courses = []
     for anchor in soup.find_all("a", href=True):
         if "/studies/index.php" not in anchor["href"]:

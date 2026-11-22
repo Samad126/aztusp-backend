@@ -133,6 +133,12 @@ class SiteScraper:
     def scrape(self, target: Target) -> dict:
         url = urljoin(self.settings.dashboard_url, target.path)
         soup = self.fetch(url, headers=PJAX_HEADERS if target.pjax else None)
+        if not _has_target_content(soup, target):
+            # Not the page we asked for: the saved session may be dead in a way that is not a redirect. Students who stay
+            # signed in get a new session and one more try; for the others the page is read as it is.
+            log.warning("%s: %s has none of its expected elements: %s", self.username, target.name, describe_page(soup))
+            if self.sign_in_again():
+                soup = self.fetch(url, headers=PJAX_HEADERS if target.pjax else None)
 
         result: dict = {"name": target.name, "url": url, "tables": {}, "pairs": {}, "fields": {}}
         for key, selector in target.tables.items():
@@ -224,6 +230,12 @@ class SiteScraper:
         with self._lock:
             self._request("GET", urljoin(self.settings.dashboard_url, DASHBOARD_LOGOUT_PATH))
             self._request("POST", urljoin(self.settings.login_url, SSO_LOGOUT_PATH))
+
+    def sign_in_again(self) -> bool:
+        """Open a new site session with the saved password, for callers that notice the session is bad on their own
+        (a page without its content). False when there is no saved password to use."""
+        with self._lock:
+            return self._sign_in_again()
 
     def _sign_in_again(self) -> bool:
         """Open a new site session with the saved password. False when there is none to use (the student does not stay
@@ -327,6 +339,20 @@ def form_payload(form: Tag) -> dict[str, str]:
             continue
         payload[name] = element.get("value", "")
     return payload
+
+
+def _has_target_content(soup: BeautifulSoup, target: Target) -> bool:
+    """Whether the page has any element the target looks for (an empty table still counts: it is the student's real data)."""
+    selectors = [*target.tables.values(), *target.pairs.values(), *target.fields.values()]
+    selectors += [section.container for section in target.sections.values()]
+    return not selectors or any(soup.select_one(selector) for selector in selectors)
+
+
+def describe_page(soup: BeautifulSoup) -> str:
+    """A short, personal-data-free description of a page for the logs: its title, size and whether it is only scripts."""
+    title = soup.title.get_text(" ", strip=True)[:80] if soup.title else None
+    text = soup.get_text(" ", strip=True)
+    return f"title={title!r} chars={len(str(soup))} text_chars={len(text)} forms={len(soup.find_all('form'))}"
 
 
 # A dashboard session that ran out is not always redirected to the SSO: the dashboard can also answer 200 with a tiny
