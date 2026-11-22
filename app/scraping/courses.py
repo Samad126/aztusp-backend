@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
@@ -6,6 +7,9 @@ from bs4 import BeautifulSoup, Comment, Tag
 
 from .client import PJAX_HEADERS, SiteScraper
 from .targets import FIELD_MAP
+
+
+log = logging.getLogger(__name__)
 
 
 class CourseNotFound(LookupError):
@@ -61,10 +65,18 @@ def list_courses(scraper: SiteScraper) -> list[dict]:
 GROUP_SUFFIX = re.compile(r"\[([^\[\]]+)\]\s*$")
 
 
+def groups_in(listing: list[dict]) -> bool:
+    return any(GROUP_SUFFIX.search(course["name"]) for course in listing)
+
+
 def student_groups(scraper: SiteScraper) -> list[str]:
     """Group codes from the dashboard's course names (`Math [M1]` gives `M1`), in order and without repeats."""
     groups: list[str] = []
-    for course in list_courses(scraper):
+    listing = list_courses(scraper)
+    if not groups_in(listing):
+        # Say what the dashboard gave, so an empty timetable can be told apart: no courses at all, or courses without a group.
+        log.warning("Dashboard listed %d courses, names: %s", len(listing), [c["name"] for c in listing][:5])
+    for course in listing:
         match = GROUP_SUFFIX.search(course["name"])
         if match and (group := match.group(1).strip()) not in groups:
             groups.append(group)
