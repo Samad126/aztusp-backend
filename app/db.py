@@ -13,6 +13,10 @@ log = logging.getLogger(__name__)
 
 LINK_CODE_MINUTES = 15
 TOKEN_DAYS = 1
+# Students who turned on "stay signed in" keep their token this long after their last request, and the service signs in
+# to the site again by itself when the site session runs out.
+STAY_SIGNED_IN_DAYS = 30
+START_PAGES = ("home", "courses", "schedule", "grades", "attendance", "notices")
 
 SCHEMA = (
     """
@@ -31,6 +35,9 @@ SCHEMA = (
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ",
     # Databases created before the password was stored at login get the column here.
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_enc BYTEA",
+    # Settings of the student that follow them to every device. Both are off/home until the student changes them.
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS start_page TEXT NOT NULL DEFAULT 'home'",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS stay_signed_in BOOLEAN NOT NULL DEFAULT FALSE",
     # Students who turned change notifications on. The watcher signs in with the password saved on the user.
     # Everything here is deleted by turning notifications off. Logging out keeps it, so checks keep running.
     """
@@ -168,6 +175,7 @@ class User:
     id: int
     site_username: str
     cookies: str | None  # decrypted JSON, None if absent or unreadable
+    stay_signed_in: bool = False  # the token is renewed on use and the site session is re-opened with the saved password
 
 
 @dataclass(frozen=True)
@@ -234,17 +242,22 @@ class UserStore:
         The password is kept encrypted, so change notifications can sign in later without asking for it again.
         """
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + timedelta(days=TOKEN_DAYS)
         encrypted_cookies = self.fernet.encrypt(cookies.encode())
         encrypted_password = self.fernet.encrypt(password.encode())
         with self._connect() as db:
             db.execute(
                 "INSERT INTO users (site_username, token_hash, token_expires_at, cookies_enc, password_enc) "
-                "VALUES (%s, %s, %s, %s, %s) "
+                "VALUES (%s, %s, now() + make_interval(days => %s), %s, %s) "
                 "ON CONFLICT(site_username) DO UPDATE SET token_hash = excluded.token_hash, "
                 "token_expires_at = excluded.token_expires_at, cookies_enc = excluded.cookies_enc, "
                 "password_enc = excluded.password_enc",
-                (site_username, _hash(token), expires_at, encrypted_cookies, encrypted_password),
+                (site_username, _hash(token), TOKEN_DAYS, encrypted_cookies, encrypted_password),
+            )
+            # A student who stays signed in keeps the longer lifetime on every new login.
+            db.execute(
+                "UPDATE users SET token_expires_at = now() + make_interval(days => %s) "
+                "WHERE site_username = %s AND stay_signed_in",
+                (STAY_SIGNED_IN_DAYS, site_username),
             )
             # The login proves this password works, so a wrong-password status from an older one is cleared.
             db.execute(
@@ -255,25 +268,37 @@ class UserStore:
         return token
 
     def get_by_token(self, token: str) -> User | None:
-        """The user a token belongs to, or None if the token is unknown or has expired."""
-        return self._get_user("token_hash = %s AND token_expires_at > now()", _hash(token))
+        """The user a token belongs to, or None if the token is unknown or has expired.
+
+        A student who stays signed in gets the token renewed, so it only expires after STAY_SIGNED_IN_DAYS of not using the app.
+        """
+        user = self._get_user("token_hash = %s AND token_expires_at > now()", _hash(token))
+        if user and user.stay_signed_in:
+            with self._connect() as db:
+                # Only written when a day or more has passed, so a busy page does not write on every request.
+                db.execute(
+                    "UPDATE users SET token_expires_at = now() + make_interval(days => %s) "
+                    "WHERE id = %s AND token_expires_at < now() + make_interval(days => %s)",
+                    (STAY_SIGNED_IN_DAYS, user.id, STAY_SIGNED_IN_DAYS - 1),
+                )
+        return user
 
     def _get_user(self, condition: str, value: object) -> User | None:
         with self._connect() as db:
             row = db.execute(
-                f"SELECT id, site_username, cookies_enc FROM users WHERE {condition}", (value,)
+                f"SELECT id, site_username, cookies_enc, stay_signed_in FROM users WHERE {condition}", (value,)
             ).fetchone()
         return self._user(row) if row else None
 
     def _user(self, row: tuple) -> User:
-        """A user from (id, site_username, cookies_enc), with the cookies decrypted."""
+        """A user from (id, site_username, cookies_enc, stay_signed_in), with the cookies decrypted."""
         cookies = None
         if row[2]:
             try:
                 cookies = self.fernet.decrypt(row[2]).decode()
             except InvalidToken:
                 log.warning("Stored cookies for user %s could not be decrypted", row[0])
-        return User(id=row[0], site_username=row[1], cookies=cookies)
+        return User(id=row[0], site_username=row[1], cookies=cookies, stay_signed_in=row[3])
 
     def save_cookies(self, user_id: int, cookies: str) -> None:
         with self._connect() as db:
@@ -287,6 +312,25 @@ class UserStore:
             db.execute(
                 "UPDATE users SET token_hash = %s, token_expires_at = NULL, cookies_enc = NULL WHERE id = %s",
                 (_hash(secrets.token_urlsafe(32)), user_id),
+            )
+
+    def get_preferences(self, user_id: int) -> tuple[str, bool]:
+        """(start page, stay signed in) of a student."""
+        with self._connect() as db:
+            row = db.execute("SELECT start_page, stay_signed_in FROM users WHERE id = %s", (user_id,)).fetchone()
+        start_page, stay = row
+        # A page that was removed from the app falls back to home instead of sending the student nowhere.
+        return (start_page if start_page in START_PAGES else "home", stay)
+
+    def set_preferences(self, user_id: int, start_page: str, stay_signed_in: bool) -> None:
+        """Save the preferences. The token lifetime follows the switch at once: turning it on gives the long lifetime,
+        turning it off puts the token back to the normal one (the site session itself is not touched)."""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE users SET start_page = %s, stay_signed_in = %s, token_expires_at = CASE WHEN %s "
+                "THEN now() + make_interval(days => %s) "
+                "ELSE LEAST(token_expires_at, now() + make_interval(days => %s)) END WHERE id = %s",
+                (start_page, stay_signed_in, stay_signed_in, STAY_SIGNED_IN_DAYS, TOKEN_DAYS, user_id),
             )
 
     def save_password(self, user_id: int, password: str) -> None:

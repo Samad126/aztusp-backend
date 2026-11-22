@@ -613,3 +613,68 @@ def test_photo_upload_documents_the_image_body(client):
     operation = client.get("/openapi.json").json()["paths"]["/api/v1/me/photo"]["put"]
 
     assert set(operation["requestBody"]["content"]) == {"image/jpeg", "image/png", "image/webp"}
+
+
+def test_preferences_default_to_home_and_not_staying_signed_in(client):
+    headers = login(client)
+    body = client.get("/api/v1/me/preferences", headers=headers).json()
+    assert body == {"start_page": "home", "stay_signed_in": False}
+
+
+def test_preferences_are_saved_and_read_back(client):
+    headers = login(client)
+    put = client.put("/api/v1/me/preferences", json={"start_page": "grades", "stay_signed_in": True}, headers=headers)
+    assert put.status_code == 200
+    assert client.get("/api/v1/me/preferences", headers=headers).json() == {"start_page": "grades", "stay_signed_in": True}
+
+
+def test_an_unknown_start_page_is_refused(client):
+    headers = login(client)
+    assert client.put("/api/v1/me/preferences", json={"start_page": "nope", "stay_signed_in": False}, headers=headers).status_code == 422
+
+
+def test_preferences_need_a_token(client):
+    assert client.get("/api/v1/me/preferences").status_code == 401
+
+
+def test_staying_signed_in_lengthens_the_token_and_turning_it_off_shortens_it(client, store):
+    headers = login(client)
+    days = "SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users"
+
+    client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=headers)
+    with store._connect() as db:
+        assert float(db.execute(days).fetchone()[0]) > 29
+
+    client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": False}, headers=headers)
+    with store._connect() as db:
+        assert float(db.execute(days).fetchone()[0]) <= 1
+
+
+def test_a_new_login_keeps_the_long_token_for_students_who_stay_signed_in(client, store):
+    headers = login(client)
+    client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=headers)
+    login(client)
+    with store._connect() as db:
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
+    assert float(days_left) > 29
+
+
+def test_using_the_token_renews_it_for_students_who_stay_signed_in(client, store):
+    headers = login(client)
+    client.put("/api/v1/me/preferences", json={"start_page": "home", "stay_signed_in": True}, headers=headers)
+    with store._connect() as db:
+        db.execute("UPDATE users SET token_expires_at = now() + interval '2 days'")
+    assert client.get("/api/v1/me/preferences", headers=headers).status_code == 200
+    with store._connect() as db:
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
+    assert float(days_left) > 29
+
+
+def test_a_token_is_not_renewed_when_staying_signed_in_is_off(client, store):
+    headers = login(client)
+    with store._connect() as db:
+        db.execute("UPDATE users SET token_expires_at = now() + interval '2 hours'")
+    client.get("/api/v1/me/preferences", headers=headers)
+    with store._connect() as db:
+        (days_left,) = db.execute("SELECT EXTRACT(EPOCH FROM (token_expires_at - now())) / 86400 FROM users").fetchone()
+    assert float(days_left) < 1

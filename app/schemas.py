@@ -27,6 +27,16 @@ class OkResponse(BaseModel):
     ok: bool = True
 
 
+class Preferences(BaseModel):
+    start_page: Literal["home", "courses", "schedule", "grades", "attendance", "notices"] = Field(
+        default="home", description="The page the app opens on at the start of a visit and after signing in."
+    )
+    stay_signed_in: bool = Field(
+        default=False,
+        description="Keep the student signed in: the token is renewed while the app is used, and the site session is opened again with the saved password when it runs out.",
+    )
+
+
 EMAIL_ADDRESS = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 

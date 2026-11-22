@@ -102,11 +102,14 @@ class SiteScraper:
         username: str,
         cookies: str | None = None,
         on_save: Callable[[str], None] | None = None,
+        saved_password: Callable[[], str | None] | None = None,
     ):
         self.settings = settings
         self.username = username
         self._password: str | None = None
         self._on_save = on_save
+        # Given only for students who stay signed in: used to open a new site session when the saved one has run out.
+        self._saved_password = saved_password
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "Mozilla/5.0 (compatible; AZTUSP/1.0)"
         self.session.mount(urljoin(settings.login_url, "/"), _SsoAdapter())
@@ -167,7 +170,11 @@ class SiteScraper:
         with self._lock:
             response = self._request("GET", url, headers=headers)
             if self._looks_logged_out(response, password_page):
-                raise LoginError("Site session expired, please log in again")
+                if not self._sign_in_again():
+                    raise LoginError("Site session expired, please log in again")
+                response = self._request("GET", url, headers=headers)
+                if self._looks_logged_out(response, password_page):
+                    raise LoginError("Site session expired, please log in again")
             self._save_cookies()
             return BeautifulSoup(response.text, "html.parser")
 
@@ -177,7 +184,12 @@ class SiteScraper:
             response = self._request("GET", url, stream=True)
             if self._looks_logged_out(response):
                 response.close()
-                raise LoginError("Site session expired, please log in again")
+                if not self._sign_in_again():
+                    raise LoginError("Site session expired, please log in again")
+                response = self._request("GET", url, stream=True)
+                if self._looks_logged_out(response):
+                    response.close()
+                    raise LoginError("Site session expired, please log in again")
             self._save_cookies()
             return response
 
@@ -196,7 +208,11 @@ class SiteScraper:
         with self._lock:
             response = self._request("POST", url, data=data, headers=PJAX_HEADERS)
             if self._looks_logged_out(response):
-                raise LoginError("Site session expired, please log in again")
+                if not self._sign_in_again():
+                    raise LoginError("Site session expired, please log in again")
+                response = self._request("POST", url, data=data, headers=PJAX_HEADERS)
+                if self._looks_logged_out(response):
+                    raise LoginError("Site session expired, please log in again")
             self._save_cookies()
             return BeautifulSoup(response.text, "html.parser")
 
@@ -208,6 +224,21 @@ class SiteScraper:
         with self._lock:
             self._request("GET", urljoin(self.settings.dashboard_url, DASHBOARD_LOGOUT_PATH))
             self._request("POST", urljoin(self.settings.login_url, SSO_LOGOUT_PATH))
+
+    def _sign_in_again(self) -> bool:
+        """Open a new site session with the saved password. False when there is none to use (the student does not stay
+        signed in). Called with the lock held. A rejected password raises, so the student is sent to the sign-in page."""
+        password = self._saved_password() if self._saved_password else None
+        if password is None:
+            return False
+        self._password = password
+        try:
+            self._login()
+        except BadCredentials as exc:
+            raise LoginError("The saved password no longer works, please log in again") from exc
+        finally:
+            self._password = None
+        return True
 
     def _login(self) -> None:
         settings = self.settings

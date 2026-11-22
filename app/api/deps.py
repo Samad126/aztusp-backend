@@ -46,7 +46,12 @@ def current_scraper(
     store: UserStore = Depends(get_store),
 ) -> SiteScraper:
     scraper = SiteScraper(
-        settings, user.site_username, user.cookies, on_save=lambda cookies: store.save_cookies(user.id, cookies)
+        settings,
+        user.site_username,
+        user.cookies,
+        on_save=lambda cookies: store.save_cookies(user.id, cookies),
+        # Only students who stay signed in get a new site session made for them; everyone else logs in again.
+        saved_password=(lambda: store.saved_password(user.id)) if user.stay_signed_in else None,
     )
     scraper.user = user
     return scraper

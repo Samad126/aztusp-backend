@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api.deps import get_store, get_timetable_source
 from .api.errors import register_error_handlers
-from .api.routers import auth, courses, me, notifications, system, telegram
+from .api.routers import auth, courses, me, notifications, preferences, system, telegram
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -34,7 +34,7 @@ site password, and set a profile photo. Students can also get a Telegram or emai
 * Your email, watched fields, last results and Telegram chat are kept only while notifications are on. Turning them off deletes the email and results (the Telegram link stays until you disconnect it). Logging out does not change them.
 * Only the resulting site session cookies are kept, **encrypted** in the database. Logging out also signs out of the university dashboard and SSO, and drops those cookies.
 * Your profile photo is kept until you replace or delete it. Logging out keeps it.
-* Your API token is stored as a SHA-256 hash, so it cannot be recovered. It expires after 1 day. Logging in again issues a new token and invalidates the old one.
+* Your API token is stored as a SHA-256 hash, so it cannot be recovered. It expires after 1 day. Logging in again issues a new token and invalidates the old one. With `stay_signed_in` on (`PUT /me/preferences`, off by default) it is renewed on use instead, and the site session is reopened with the saved password when it runs out.
 * If the site session expires, data endpoints answer `401` and you need to log in again.
 """
 
@@ -63,7 +63,7 @@ app = FastAPI(
     title="AZTUSP Backend",
     summary="Per-user scraping API for the university student portal.",
     description=DESCRIPTION,
-    version="6.0.0",
+    version="6.1.0",
     license_info={"name": "MIT", "identifier": "MIT"},
     openapi_tags=TAGS,
 )
@@ -88,6 +88,6 @@ app.include_router(system.router)
 
 # Current, documented API.
 v1 = APIRouter(prefix=API_PREFIX)
-for router in (auth.router, me.router, notifications.router, telegram.router, courses.router):
+for router in (auth.router, me.router, preferences.router, notifications.router, telegram.router, courses.router):
     v1.include_router(router)
 app.include_router(v1)
